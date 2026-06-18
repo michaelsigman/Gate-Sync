@@ -130,6 +130,32 @@
   .name-row .badge.part{background:rgba(245,158,11,.18);color:#f59e0b}
   .name-row .badge.new{background:rgba(148,163,184,.14);color:#94a3b8}
   .name-row .badge.unk{background:rgba(148,163,184,.10);color:#64748b}
+  .calendar{
+    background:#11161d;border:1px solid #1f2730;border-radius:12px;
+    padding:14px;margin-bottom:16px;
+  }
+  .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .cal-head .title{font-weight:600;font-size:15px}
+  .cal-head button{
+    background:#1a212b;border:1px solid #2a333f;color:#cbd5e1;border-radius:8px;
+    padding:4px 10px;cursor:pointer;font-size:14px;
+  }
+  .cal-head button:hover{background:#222b36}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .cal-dow{text-align:center;font-size:11px;color:#64748b;padding:2px 0}
+  .cal-cell{
+    min-height:46px;border:1px solid #1b222b;border-radius:8px;padding:4px 6px;
+    background:#0e1319;position:relative;cursor:default;
+  }
+  .cal-cell.has{cursor:pointer;border-color:#2a3a4d}
+  .cal-cell.has:hover{background:#141b24}
+  .cal-cell .d{font-size:12px;color:#94a3b8}
+  .cal-cell.today .d{color:#10b981;font-weight:700}
+  .cal-cell .cnt{
+    position:absolute;right:5px;bottom:4px;font-size:12px;font-weight:700;
+    background:rgba(16,185,129,.18);color:#10b981;border-radius:9px;padding:1px 7px;
+  }
+  .cal-cell.empty{background:transparent;border-color:transparent}
   .name-row .pin{
     font-family:'Spline Sans Mono',monospace;font-size:13px;color:var(--gold);
     background:#241f14;border:1px solid #3a3018;padding:2px 8px;border-radius:5px;
@@ -195,6 +221,8 @@
       <button data-mode="live">Live</button>
     </div>
   </div>
+
+  <div id="calendar" class="calendar"></div>
 
   <div class="toolbar">
     <label class="mode-label" for="dateInput">Arrivals on</label>
@@ -399,6 +427,47 @@ async function parsePasted(){
 }
 
 // init
+// --- Calendar ---
+let calYear, calMonth; // month is 1-12
+async function loadCalendar(){
+  const cal = $('#calendar');
+  if(calYear===undefined){ const n=new Date(); calYear=n.getFullYear(); calMonth=n.getMonth()+1; }
+  cal.innerHTML = '<div class="cal-head"><button id="calPrev">‹</button><span class="title">…</span><button id="calNext">›</button></div>';
+  let data={counts:{}};
+  try{
+    const r = await fetch('/api/calendar?year='+calYear+'&month='+calMonth);
+    data = await r.json();
+  }catch(e){ /* show empty grid on failure */ }
+  const counts = data.counts||{};
+  const monthName = new Date(calYear, calMonth-1, 1).toLocaleString('default',{month:'long',year:'numeric'});
+  const pad=n=>String(n).padStart(2,'0');
+  const firstDow = new Date(Date.UTC(calYear, calMonth-1, 1)).getUTCDay();
+  const days = new Date(Date.UTC(calYear, calMonth, 0)).getUTCDate();
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  let html = '<div class="cal-head"><button id="calPrev">‹</button><span class="title">'+monthName+'</span><button id="calNext">›</button></div>';
+  html += '<div class="cal-grid">';
+  ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(d=>html+='<div class="cal-dow">'+d+'</div>');
+  for(let i=0;i<firstDow;i++) html+='<div class="cal-cell empty"></div>';
+  for(let d=1; d<=days; d++){
+    const ds = calYear+'-'+pad(calMonth)+'-'+pad(d);
+    const c = counts[ds]||0;
+    const cls = 'cal-cell'+(c>0?' has':'')+(ds===todayStr?' today':'');
+    html += '<div class="'+cls+'" data-date="'+ds+'">'
+          + '<span class="d">'+d+'</span>'
+          + (c>0?'<span class="cnt">'+c+'</span>':'')
+          + '</div>';
+  }
+  html += '</div>';
+  cal.innerHTML = html;
+
+  $('#calPrev').onclick=()=>{ calMonth--; if(calMonth<1){calMonth=12;calYear--;} loadCalendar(); };
+  $('#calNext').onclick=()=>{ calMonth++; if(calMonth>12){calMonth=1;calYear++;} loadCalendar(); };
+  cal.querySelectorAll('.cal-cell.has').forEach(cell=>{
+    cell.onclick=()=>{ $('#dateInput').value=cell.dataset.date; loadArrivals(); };
+  });
+}
+
 (function(){
   const d=new Date(); d.setDate(d.getDate()+1);
   $('#dateInput').value=d.toISOString().slice(0,10);
@@ -406,6 +475,7 @@ async function parsePasted(){
   $('#loadBtn').onclick=loadArrivals;
   $('#parseBtn').onclick=parsePasted;
   setMode('dry');
+  loadCalendar();
 })();
 </script>
 </body>

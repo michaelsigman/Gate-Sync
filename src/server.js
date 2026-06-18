@@ -321,8 +321,9 @@ app.get('/api/arrivals', checkToken, async (req, res) => {
     const enriched = [];
     for (const r of reservations) {
       const prop = propertyMap[r.propertyUid];
+      if (!prop) continue; // mapped houses only — skip properties with no gate
       const parsed = parseGateNames(r.notes);
-      const targets = prop ? getGateTargets(prop) : [];
+      const targets = getGateTargets(prop);
 
       // For each parsed name, determine if it's already on each gate target.
       let namesWithStatus = parsed.names.map((n) => ({
@@ -344,10 +345,10 @@ app.get('/api/arrivals', checkToken, async (req, res) => {
       enriched.push({
         reservationId: r.reservationId,
         propertyUid: r.propertyUid,
-        mapped: !!prop,
+        mapped: true,
         gates: targets.map((t) => ({ gate: t.gate, label: t.label })),
         gateCount: targets.length,
-        property: prop ? prop.label : '(unmapped)',
+        property: prop.label,
         arrivalDate: r.arrivalDate,
         departureDate: r.departureDate,
         notes: r.notes,
@@ -359,6 +360,41 @@ app.get('/api/arrivals', checkToken, async (req, res) => {
       });
     }
     res.json({ date: day, count: enriched.length, reservations: enriched });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- API: month calendar counts (fast, no gate login) ---
+// Returns, per day in the given month, how many MAPPED reservations with at
+// least one parsed name check in. Used by the calendar overview.
+app.get('/api/calendar', checkToken, async (req, res) => {
+  try {
+    const now = new Date();
+    const year = Number(req.query.year) || now.getUTCFullYear();
+    const month = Number(req.query.month) || now.getUTCMonth() + 1; // 1-12
+    const pad = (n) => String(n).padStart(2, '0');
+    const from = `${year}-${pad(month)}-01`;
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const to = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+    const hostfully = new HostfullyClient({
+      apiKey: process.env.HOSTFULLY_API_KEY,
+      agencyUid: process.env.HOSTFULLY_AGENCY_UID,
+    });
+    const reservations = await hostfully.getReservationsInRange(from, to);
+
+    const counts = {}; // 'YYYY-MM-DD' -> number of mapped reservations w/ names
+    for (const r of reservations) {
+      const prop = propertyMap[r.propertyUid];
+      if (!prop) continue; // mapped only
+      const day = (r.arrivalDate || '').slice(0, 10);
+      if (!day) continue;
+      const parsed = parseGateNames(r.notes);
+      if (parsed.names.length === 0) continue; // only days that need names added
+      counts[day] = (counts[day] || 0) + 1;
+    }
+    res.json({ year, month, counts });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

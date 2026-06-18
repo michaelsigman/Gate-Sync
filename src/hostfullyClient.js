@@ -64,6 +64,24 @@ class HostfullyClient {
       (l.status || '').toUpperCase() === 'BOOKED';
   }
 
+  // Range variant for the calendar: returns all BOOKED reservations whose
+  // check-in falls within [fromYYYYMMDD, toYYYYMMDD] inclusive.
+  async getReservationsInRange(fromYYYYMMDD, toYYYYMMDD) {
+    const res = await this.http.get('/leads', {
+      params: {
+        agencyUid: this.agencyUid,
+        checkInFrom: fromYYYYMMDD,
+        checkInTo: toYYYYMMDD,
+        _limit: 500,
+      },
+    });
+    const leads = res.data?.leads || res.data?.data || res.data || [];
+    const list = Array.isArray(leads) ? leads : [];
+    return list
+      .filter(HostfullyClient.isActiveBooking)
+      .map(HostfullyClient.normalizeLead);
+  }
+
   async getReservationsArriving(dateYYYYMMDD, { logger } = {}) {
     const res = await this.http.get('/leads', {
       params: {
