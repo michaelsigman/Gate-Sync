@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gate Sync — BookedUp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Spline+Sans+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e1217; --panel:#161c24; --panel-2:#1c242e; --line:#28323e;
+    --ink:#e8edf2; --ink-dim:#9aa7b4; --ink-faint:#637084;
+    --accent:#4cc2a0;          /* safe / dry-run */
+    --armed:#e0533d;           /* live / armed */
+    --armed-soft:#3a1f1c;
+    --gold:#d9a441;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:Inter,system-ui,sans-serif;font-size:15px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'Spline Sans Mono',monospace;}
+  header{
+    border-bottom:1px solid var(--line);padding:18px 24px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    position:sticky;top:0;background:rgba(14,18,23,.92);backdrop-filter:blur(8px);z-index:10;
+  }
+  .brand{display:flex;align-items:center;gap:12px}
+  .sigil{width:30px;height:30px;flex:none}
+  .brand h1{font-size:16px;font-weight:600;margin:0;letter-spacing:.2px}
+  .brand .sub{font-size:12px;color:var(--ink-faint);margin-top:1px}
+  main{max-width:880px;margin:0 auto;padding:28px 24px 80px}
+
+  /* mode toggle */
+  .modebar{
+    display:flex;align-items:center;gap:14px;margin-bottom:24px;
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 18px;
+  }
+  .mode-label{font-size:13px;color:var(--ink-dim);margin-right:auto}
+  .switch{position:relative;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .switch button{
+    background:transparent;border:0;color:var(--ink-dim);
+    font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;cursor:pointer;
+  }
+  .switch button.on[data-mode="dry"]{background:var(--accent);color:#06120e}
+  .switch button.on[data-mode="live"]{background:var(--armed);color:#1b0a07}
+  .statechip{
+    font-size:12px;font-weight:600;padding:5px 11px;border-radius:20px;
+    border:1px solid;
+  }
+  .statechip.dry{color:var(--accent);border-color:#274;background:#0f211b}
+  .statechip.live{color:#ffb9ad;border-color:#5a2a22;background:var(--armed-soft)}
+
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+  input[type=date]{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:8px 10px;font-family:inherit;font-size:14px;
+  }
+  .btn{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:9px 16px;font-family:inherit;font-size:14px;font-weight:500;cursor:pointer;
+    transition:border-color .15s,background .15s;
+  }
+  .btn:hover{border-color:#3a4757}
+  .btn.primary{background:var(--accent);color:#06120e;border-color:transparent;font-weight:600}
+  .btn.primary.live{background:var(--armed);color:#1b0a07}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .empty{
+    border:1px dashed var(--line);border-radius:var(--radius);
+    padding:40px 24px;text-align:center;color:var(--ink-faint);
+  }
+
+  /* reservation card */
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    margin-bottom:16px;overflow:hidden;
+  }
+  .card.unmapped{opacity:.6}
+  .card-head{
+    display:flex;align-items:flex-start;gap:14px;padding:16px 18px;
+    border-bottom:1px solid var(--line);
+  }
+  .gate-tag{
+    font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;
+    padding:4px 9px;border-radius:5px;flex:none;margin-top:2px;
+  }
+  .gate-tag.proptia{background:#23303f;color:#8fb6e0}
+  .gate-tag.goaccess{background:#1f3330;color:#7fd7bd}
+  .gate-tag.none{background:#2a2320;color:#c9a78f}
+  .tag-wrap{display:flex;flex-direction:column;gap:4px;flex:none;margin-top:2px}
+  .gate-results{border-top:1px solid var(--line);padding:10px 18px 14px;background:#12181f}
+  .gate-result-head{
+    font-size:12px;color:var(--ink-dim);margin:12px 0 6px;display:flex;align-items:center;gap:8px;
+  }
+  .gate-result-head:first-child{margin-top:2px}
+  .card-head .who{flex:1;min-width:0}
+  .card-head .prop{font-weight:600;font-size:15px}
+  .card-head .stay{font-size:12.5px;color:var(--ink-dim);margin-top:2px}
+  .card-head .stay .mono{color:var(--ink)}
+  .count{
+    font-size:12px;color:var(--ink-dim);flex:none;text-align:right;margin-top:2px;
+  }
+  .count b{color:var(--ink);font-size:18px;display:block;font-family:'Spline Sans Mono',monospace}
+
+  .names{padding:6px 18px 14px}
+  .names h4{
+    font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-faint);
+    margin:12px 0 8px;font-weight:600;
+  }
+  .name-row{
+    display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1e2730;
+  }
+  .name-row:last-child{border-bottom:0}
+  .name-row .idx{
+    font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--ink-faint);
+    width:22px;flex:none;
+  }
+  .name-row .nm{flex:1}
+  .name-row .pin{
+    font-family:'Spline Sans Mono',monospace;font-size:13px;color:var(--gold);
+    background:#241f14;border:1px solid #3a3018;padding:2px 8px;border-radius:5px;
+  }
+  .status-dot{font-size:12px;font-weight:500;flex:none}
+  .status-dot.would_add{color:var(--accent)}
+  .status-dot.added{color:var(--accent)}
+  .status-dot.already_on_gate{color:var(--ink-faint)}
+  .status-dot.failed{color:var(--armed)}
+
+  .card-foot{
+    display:flex;align-items:center;gap:12px;padding:12px 18px;background:var(--panel-2);
+    border-top:1px solid var(--line);
+  }
+  .card-foot .msg{font-size:13px;color:var(--ink-dim);margin-right:auto}
+
+  .paste{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px;margin-top:30px;
+  }
+  .paste h3{margin:0 0 4px;font-size:15px}
+  .paste p{margin:0 0 12px;font-size:13px;color:var(--ink-faint)}
+  textarea{
+    width:100%;min-height:90px;background:var(--panel-2);border:1px solid var(--line);
+    color:var(--ink);border-radius:8px;padding:10px;font-family:'Spline Sans Mono',monospace;
+    font-size:12.5px;resize:vertical;
+  }
+  .toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+    padding:12px 20px;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);
+    opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;
+  }
+  .toast.show{opacity:1}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--ink-faint);
+    border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg class="sigil" viewBox="0 0 32 32" fill="none">
+      <rect x="3" y="13" width="26" height="3" rx="1.5" fill="#4cc2a0"/>
+      <rect x="3" y="6" width="3" height="20" rx="1.5" fill="#637084"/>
+      <rect x="26" y="6" width="3" height="20" rx="1.5" fill="#637084"/>
+      <circle cx="16" cy="22" r="3.4" fill="none" stroke="#d9a441" stroke-width="2"/>
+    </svg>
+    <div>
+      <h1>Gate Sync</h1>
+      <div class="sub">BookedUp guest access</div>
+    </div>
+  </div>
+  <span id="stateChip" class="statechip dry">Dry-run — nothing is written</span>
+</header>
+
+<main>
+  <div class="modebar">
+    <span class="mode-label">Mode controls whether passes are actually created at the gate.</span>
+    <div class="switch" id="modeSwitch">
+      <button data-mode="dry" class="on">Dry-run</button>
+      <button data-mode="live">Live</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <label class="mode-label" for="dateInput">Arrivals on</label>
+    <input type="date" id="dateInput" />
+    <button class="btn" id="loadBtn">Load arrivals</button>
+  </div>
+
+  <div id="list"></div>
+
+  <section class="paste">
+    <h3>Test with pasted notes</h3>
+    <p>Paste a reservation's notes to see which driver names would be parsed — no gate is contacted.</p>
+    <textarea id="pasteBox" placeholder="Paste Hostfully notes here…"></textarea>
+    <div style="margin-top:10px"><button class="btn" id="parseBtn">Parse names</button></div>
+    <div id="pasteResult" style="margin-top:14px"></div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const state = { mode:'dry' };
+const $ = (s,r=document)=>r.querySelector(s);
+const el = (t,c,txt)=>{const e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;};
+
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('#modeSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.mode===m));
+  const chip = $('#stateChip');
+  if(m==='live'){ chip.className='statechip live'; chip.textContent='Live — passes will be created'; }
+  else { chip.className='statechip dry'; chip.textContent='Dry-run — nothing is written'; }
+  document.querySelectorAll('.btn.act').forEach(b=>{
+    b.classList.toggle('live', m==='live');
+    b.textContent = m==='live' ? 'Add to gate' : 'Preview add';
+  });
+}
+
+function toast(msg){
+  const t=$('#toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2600);
+}
+
+function statusLabel(s){
+  return {would_add:'will add', added:'added', already_on_gate:'already on gate', failed:'failed'}[s]||s;
+}
+
+function reservationCard(r){
+  const card = el('div','card'+(r.mapped?'':' unmapped'));
+  const head = el('div','card-head');
+
+  // One tag per gate this property targets (often 1, but 2 for dual-condo listings).
+  const tagWrap = el('div','tag-wrap');
+  if(r.mapped && r.gates && r.gates.length){
+    r.gates.forEach(g=>{
+      const t = el('span','gate-tag '+g.gate, g.gate);
+      t.title = g.label;
+      tagWrap.appendChild(t);
+    });
+  } else {
+    tagWrap.appendChild(el('span','gate-tag none','unmapped'));
+  }
+  head.appendChild(tagWrap);
+
+  const who = el('div','who');
+  who.appendChild(el('div','prop', r.property));
+  const stay = el('div','stay');
+  const gname = (r.guest&&(r.guest.firstName||r.guest.lastName)) ? (r.guest.firstName+' '+r.guest.lastName).trim() : 'Guest';
+  stay.innerHTML = gname+' · <span class="mono">'+r.arrivalDate+'</span> → <span class="mono">'+r.departureDate+'</span>';
+  who.appendChild(stay);
+  if(r.mapped && r.gateCount>1){
+    who.appendChild(el('div','stay','Adds to '+r.gateCount+' gates: '+r.gates.map(g=>g.label).join(' + ')));
+  }
+  head.appendChild(who);
+
+  const count = el('div','count'); count.innerHTML = '<b>'+r.nameCount+'</b> names';
+  head.appendChild(count);
+  card.appendChild(head);
+
+  const names = el('div','names');
+  if(r.nameCount===0){
+    names.appendChild(el('div','stay','No driver-names block found in notes.'));
+  } else {
+    const h4 = el('h4',null,'Drivers'); names.appendChild(h4);
+    r.names.forEach((n,i)=>{
+      const row = el('div','name-row');
+      row.appendChild(el('span','idx', String(i+1).padStart(2,'0')));
+      row.appendChild(el('span','nm', (n.firstName+' '+(n.lastName||'')).trim()));
+      names.appendChild(row);
+    });
+  }
+  card.appendChild(names);
+
+  if(r.mapped && r.nameCount>0){
+    const foot = el('div','card-foot');
+    const msg = el('span','msg',''); foot.appendChild(msg);
+    const act = el('button','btn primary act'+(state.mode==='live'?' live':''),
+      state.mode==='live'?'Add to gate':'Preview add');
+    act.onclick = ()=>processCard(r, card, act, msg);
+    foot.appendChild(act);
+    card.appendChild(foot);
+  }
+  return card;
+}
+
+async function processCard(r, card, btn, msg){
+  const live = state.mode==='live';
+  const gateCount = (r.gateCount||1);
+  if(live && !confirm('Add '+r.nameCount+' guest(s) to '+gateCount+' gate(s) for '+r.property+'?\\nThis creates real passes.')) return;
+  btn.disabled=true; msg.innerHTML='<span class="spin"></span> '+(live?'Adding…':'Previewing…');
+  try{
+    const res = await fetch('/api/process',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dryRun:!live, reservation:{
+        reservationId:r.reservationId, propertyUid:r.propertyUid,
+        arrivalDate:r.arrivalDate, departureDate:r.departureDate,
+        notes:r.notes||''
+      }})});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error||'request failed');
+
+    // Remove any prior result block, then render per-gate results.
+    let prior = card.querySelector('.gate-results');
+    if(prior) prior.remove();
+    const block = el('div','gate-results');
+    let totalAdded = 0;
+    (data.gates||[]).forEach(g=>{
+      const gh = el('div','gate-result-head');
+      gh.innerHTML = '<span class="gate-tag '+g.gate+'">'+g.gate+'</span> '+g.label;
+      block.appendChild(gh);
+      (g.results||[]).forEach(rr=>{
+        const row = el('div','name-row');
+        row.appendChild(el('span','nm', rr.name));
+        if(rr.pin){ row.appendChild(el('span','pin','PIN '+rr.pin)); }
+        const dot = el('span','status-dot '+rr.status, statusLabel(rr.status));
+        row.appendChild(dot);
+        block.appendChild(row);
+        if(rr.status==='added'||rr.status==='would_add') totalAdded++;
+        if(rr.error){ const er=el('div','stay',' '+rr.error); block.appendChild(er); }
+      });
+    });
+    card.appendChild(block);
+
+    msg.textContent = live
+      ? (totalAdded+' pass(es) created across '+(data.gates||[]).length+' gate(s)')
+      : (totalAdded+' would be added across '+(data.gates||[]).length+' gate(s)');
+    toast(live?'Passes created':'Dry-run complete');
+  }catch(e){
+    msg.textContent='Error: '+e.message; toast('Failed: '+e.message);
+  }finally{ btn.disabled=false; }
+}
+
+async function loadArrivals(){
+  const date = $('#dateInput').value;
+  const list = $('#list'); list.innerHTML='<div class="empty"><span class="spin"></span> Loading arrivals…</div>';
+  try{
+    const res = await fetch('/api/arrivals'+(date?('?date='+date):''));
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error||'request failed');
+    list.innerHTML='';
+    if(!data.reservations.length){
+      list.innerHTML='<div class="empty">No arrivals for this date.</div>'; return;
+    }
+    data.reservations.forEach(r=>{ list.appendChild(reservationCard(r)); });
+  }catch(e){
+    list.innerHTML='<div class="empty">Could not load arrivals: '+e.message+'</div>';
+  }
+}
+
+async function parsePasted(){
+  const notes = $('#pasteBox').value;
+  const out = $('#pasteResult');
+  out.innerHTML='<span class="spin"></span>';
+  const res = await fetch('/api/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes})});
+  const data = await res.json();
+  if(!data.names || !data.names.length){ out.innerHTML='<div class="stay">No driver names found.</div>'; return; }
+  const wrap=el('div','names');
+  wrap.appendChild(el('h4',null,'Parsed names ('+data.names.length+')'));
+  data.names.forEach((n,i)=>{
+    const row=el('div','name-row');
+    row.appendChild(el('span','idx',String(i+1).padStart(2,'0')));
+    row.appendChild(el('span','nm',(n.firstName+' '+(n.lastName||'')).trim()));
+    wrap.appendChild(row);
+  });
+  out.innerHTML=''; out.appendChild(wrap);
+}
+
+// init
+(function(){
+  const d=new Date(); d.setDate(d.getDate()+1);
+  $('#dateInput').value=d.toISOString().slice(0,10);
+  document.querySelectorAll('#modeSwitch button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+  $('#loadBtn').onclick=loadArrivals;
+  $('#parseBtn').onclick=parsePasted;
+  setMode('dry');
+})();
+</script>
+</body>
+</html>

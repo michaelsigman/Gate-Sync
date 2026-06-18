@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: bookedup-gate-sync
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DRY_RUN
+        value: "true"          # keep true until you've watched it for a few days
+      - key: NODE_VERSION
+        value: "20"
+      - key: PROPTIA_USERNAME
+        sync: false
+      - key: PROPTIA_PASSWORD
+        sync: false
+      - key: PROPTIA_LOGIN_PATH
+        value: /en-us/login/
+      - key: GOACCESS_USERNAME
+        sync: false
+      - key: GOACCESS_PASSWORD
+        sync: false
+      - key: GOACCESS_ANON_KEY
+        sync: false
+      - key: GOACCESS_RESIDENT_ID
+        sync: false
+      - key: GOACCESS_VISITOR_TYPE_ID
+        value: cd2ad43d-2abd-46fe-aee7-6a23069ac2ff
+      - key: HOSTFULLY_API_KEY
+        sync: false
+      - key: HOSTFULLY_AGENCY_UID
+        sync: false
+      - key: UI_TOKEN
+        sync: false           # set a value to password-protect the UI
+      - key: CRON_SCHEDULE
+        value: "0 16 * * *"

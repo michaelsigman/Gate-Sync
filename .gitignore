@@ -1,0 +1,5 @@
+node_modules/
+.env
+gate_property_map.json
+npm-debug.log*
+.DS_Store

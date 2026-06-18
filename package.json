@@ -1,0 +1,25 @@
+{
+  "name": "bookedup-gate-sync",
+  "version": "0.1.0",
+  "description": "Adds guest driver names to Proptia gate from Hostfully reservation notes (BookedUp).",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "run-once": "node src/orchestrator.js",
+    "test-parser": "node test_parser.js",
+    "map": "node src/mapHelper.js",
+    "dev": "node src/server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "axios-cookiejar-support": "^5.0.2",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "form-data": "^4.0.0",
+    "node-cron": "^3.0.3",
+    "tough-cookie": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
