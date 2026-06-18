@@ -327,6 +327,7 @@ module.exports = {
   processReservation,
   makeGateManager,
   getGateTargets,
+  nameKey,
   fmtYYYYMMDD,
   fmtMMDDYYYY,
 };

@@ -122,6 +122,14 @@
     width:22px;flex:none;
   }
   .name-row .nm{flex:1}
+  .name-row .badge{
+    font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;
+    margin-left:8px;white-space:nowrap;
+  }
+  .name-row .badge.on{background:rgba(16,185,129,.18);color:#10b981}
+  .name-row .badge.part{background:rgba(245,158,11,.18);color:#f59e0b}
+  .name-row .badge.new{background:rgba(148,163,184,.14);color:#94a3b8}
+  .name-row .badge.unk{background:rgba(148,163,184,.10);color:#64748b}
   .name-row .pin{
     font-family:'Spline Sans Mono',monospace;font-size:13px;color:var(--gold);
     background:#241f14;border:1px solid #3a3018;padding:2px 8px;border-radius:5px;
@@ -270,10 +278,28 @@ function reservationCard(r){
     names.appendChild(el('div','stay','No driver-names block found in notes.'));
   } else {
     const h4 = el('h4',null,'Drivers'); names.appendChild(h4);
-    r.names.forEach((n,i)=>{
+    const statusList = r.namesWithStatus || r.names.map(n=>({firstName:n.firstName,lastName:n.lastName,onGates:{}}));
+    statusList.forEach((n,i)=>{
       const row = el('div','name-row');
       row.appendChild(el('span','idx', String(i+1).padStart(2,'0')));
       row.appendChild(el('span','nm', (n.firstName+' '+(n.lastName||'')).trim()));
+      // Already-on-gate badge: green if on ALL gates, amber if on some, none if not.
+      if(r.gateCheck && r.gates && r.gates.length){
+        const labels = r.gates.map(g=>g.label);
+        const states = labels.map(l=>n.onGates ? n.onGates[l] : undefined);
+        const known = states.filter(s=>s===true||s===false);
+        const onCount = states.filter(s=>s===true).length;
+        if(known.length===0){
+          // couldn't check any gate
+          row.appendChild(el('span','badge unk','—'));
+        } else if(onCount===labels.length){
+          row.appendChild(el('span','badge on','on gate'));
+        } else if(onCount>0){
+          row.appendChild(el('span','badge part', onCount+'/'+labels.length+' gates'));
+        } else {
+          row.appendChild(el('span','badge new','not added'));
+        }
+      }
       names.appendChild(row);
     });
   }

@@ -27,6 +27,45 @@ function checkToken(req, res, next) {
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+// --- Controlled single live add: one test guest to a GoAccess property ---
+// POST /api/debug/goaccess-add-test?propertyUid=...  (creates ONE real pass)
+app.post('/api/debug/goaccess-add-test', checkToken, async (req, res) => {
+  try {
+    const propertyUid = req.query.propertyUid;
+    const prop = propertyUid && propertyMap[propertyUid];
+    if (!prop) return res.status(404).json({ error: 'property not mapped' });
+
+    const { getGateTargets, makeGateManager } = require('./orchestrator');
+    const target = getGateTargets(prop).find((t) => t.gate === 'goaccess');
+    if (!target) return res.status(400).json({ error: 'no goaccess gate on this property' });
+
+    const gates = makeGateManager(console, { login: true });
+    const client = await gates.get('goaccess');
+
+    const today = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const startISO = `${today.toISOString().slice(0, 10)}T07:00:00.000Z`;
+    const endNext = new Date(tomorrow); endNext.setDate(endNext.getDate() + 1);
+    const endISO = `${endNext.toISOString().slice(0, 10)}T06:59:59.999Z`;
+
+    const guest = {
+      firstName: req.query.first || 'Zzztest',
+      lastName: req.query.last || 'Deleteme',
+    };
+    const r = await client.addGuest(target.config, guest, { startISO, endISO });
+    res.json({
+      added: r.ok,
+      httpStatus: r.status,
+      pin: r.pin || null,
+      guest: `${guest.firstName} ${guest.lastName}`,
+      gate: target.label,
+      note: 'Check GoAccess portal for this guest, then delete it.',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, body: e.response?.data });
+  }
+});
+
 // --- Controlled single live add: one test guest to one Proptia property ---
 // POST /api/debug/proptia-add-test?propertyUid=...  (creates ONE real pass)
 app.post('/api/debug/proptia-add-test', checkToken, async (req, res) => {
@@ -241,17 +280,68 @@ function isoOffset(base, days) {
 app.get('/api/arrivals', checkToken, async (req, res) => {
   try {
     const day = req.query.date || tomorrowISO();
+    // Gate check is ON by default; pass ?checkGates=0 to skip for a faster load.
+    const checkGates = req.query.checkGates !== '0';
     const hostfully = new HostfullyClient({
       apiKey: process.env.HOSTFULLY_API_KEY,
       agencyUid: process.env.HOSTFULLY_AGENCY_UID,
     });
     const reservations = await hostfully.getReservationsArriving(day, { logger: console });
-    const { getGateTargets } = require('./orchestrator');
-    const enriched = reservations.map((r) => {
+    const { getGateTargets, makeGateManager } = require('./orchestrator');
+
+    // Build a cache of existing visitor name-keys per gate target, so we only
+    // hit each gate once even if several reservations map to it. Resilient:
+    // if a gate read fails, we just skip the "already added" marks for it.
+    const gates = checkGates ? makeGateManager(console, { login: true }) : null;
+    const existingByTarget = new Map(); // key: gate+communityId -> Set(nameKeys)
+    const { nameKey } = require('./orchestrator');
+
+    async function existingFor(target) {
+      const cacheKey = `${target.gate}|${target.config.communityId}|${target.config.householdId || ''}`;
+      if (existingByTarget.has(cacheKey)) return existingByTarget.get(cacheKey);
+      let set = new Set();
+      try {
+        const client = await gates.get(target.gate);
+        const visitors = await client.listVisitors(target.config);
+        for (const v of visitors) {
+          if (v.first_name !== undefined) set.add(nameKey(v.first_name, v.last_name));
+          else if (v.name) {
+            const parts = String(v.name).trim().split(/\s+/);
+            set.add(nameKey(parts[0] || '', parts.slice(1).join(' ')));
+          }
+        }
+      } catch (e) {
+        console.warn(`[arrivals] gate read failed for ${target.label}: ${e.message}`);
+        set = null; // null = "couldn't check", distinct from empty set
+      }
+      existingByTarget.set(cacheKey, set);
+      return set;
+    }
+
+    const enriched = [];
+    for (const r of reservations) {
       const prop = propertyMap[r.propertyUid];
       const parsed = parseGateNames(r.notes);
       const targets = prop ? getGateTargets(prop) : [];
-      return {
+
+      // For each parsed name, determine if it's already on each gate target.
+      let namesWithStatus = parsed.names.map((n) => ({
+        firstName: n.firstName,
+        lastName: n.lastName,
+        onGates: {}, // label -> true(on) / false(not) / null(unknown)
+      }));
+
+      if (checkGates && targets.length) {
+        for (const t of targets) {
+          const existing = await existingFor(t);
+          for (const nm of namesWithStatus) {
+            const key = nameKey(nm.firstName, nm.lastName);
+            nm.onGates[t.label] = existing === null ? null : existing.has(key);
+          }
+        }
+      }
+
+      enriched.push({
         reservationId: r.reservationId,
         propertyUid: r.propertyUid,
         mapped: !!prop,
@@ -263,9 +353,11 @@ app.get('/api/arrivals', checkToken, async (req, res) => {
         notes: r.notes,
         guest: parsed.guest,
         names: parsed.names,
+        namesWithStatus,
         nameCount: parsed.names.length,
-      };
-    });
+        gateCheck: checkGates,
+      });
+    }
     res.json({ date: day, count: enriched.length, reservations: enriched });
   } catch (e) {
     res.status(500).json({ error: e.message });
