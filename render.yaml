@@ -1,3 +1,8 @@
+# Gate Sync — Render deployment (manual-use web service)
+# Hosts the operator UI: pull up arrivals for a date, review parsed driver
+# names, and add them to the gate(s) via the Dry-run/Live toggle.
+# (Daily cron deferred — add a Render Cron Job running `npm run run-once` later.)
+
 services:
   - type: web
     name: bookedup-gate-sync
@@ -7,7 +12,7 @@ services:
     startCommand: npm start
     envVars:
       - key: DRY_RUN
-        value: "true"          # keep true until you've watched it for a few days
+        value: "false"         # UI toggle controls mode; set "true" to hard-lock preview-only
       - key: NODE_VERSION
         value: "20"
       - key: PROPTIA_USERNAME
@@ -15,7 +20,7 @@ services:
       - key: PROPTIA_PASSWORD
         sync: false
       - key: PROPTIA_LOGIN_PATH
-        value: /en-us/login/
+        value: /en-us/proptia/accounts/login/
       - key: GOACCESS_USERNAME
         sync: false
       - key: GOACCESS_PASSWORD
@@ -26,11 +31,11 @@ services:
         sync: false
       - key: GOACCESS_VISITOR_TYPE_ID
         value: cd2ad43d-2abd-46fe-aee7-6a23069ac2ff
+      - key: PROPERTY_UTC_OFFSET_HOURS
+        value: "7"
+      - key: GOACCESS_MAX_SEGMENT_DAYS
+        value: "6"
       - key: HOSTFULLY_API_KEY
         sync: false
       - key: HOSTFULLY_AGENCY_UID
         sync: false
-      - key: UI_TOKEN
-        sync: false           # set a value to password-protect the UI
-      - key: CRON_SCHEDULE
-        value: "0 16 * * *"
