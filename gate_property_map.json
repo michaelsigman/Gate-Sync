@@ -1,0 +1,66 @@
+{
+  "f0d183fc-cc11-4c0a-ab60-d7632954fd51": {
+    "label": "Jennie's Listing — Dual Nicholson Court Condos (6BR)",
+    "gates": [
+      {
+        "gate": "proptia",
+        "label": "49325 Nicholson Court",
+        "communityId": "a9479970-ddb0-4195-b93a-8450b4d80e8d",
+        "propertyId": "6d99ee4c-5125-11f0-bfe5-0022480abcad",
+        "unitId": "e5118bf6-e2ba-498d-8396-8da84529c6cb",
+        "memberId": "2de8889a-1862-4908-9a6e-fa5465ff1ce6",
+        "passName": "5f5b814b-ac9a-4243-9a3d-439c5ea57096"
+      },
+      {
+        "gate": "proptia",
+        "label": "49331 Nicholson Court",
+        "communityId": "438a8e51-72ad-40d2-ae78-b517811f87f1",
+        "propertyId": "6d99ee4c-5125-11f0-bfe5-0022480abcad",
+        "unitId": "e5118bf6-e2ba-498d-8396-8da84529c6cb",
+        "memberId": "d539f704-55ae-4e1d-b975-3796dd705fb4",
+        "passName": "5f5b814b-ac9a-4243-9a3d-439c5ea57096"
+      }
+    ]
+  },
+  "3c3fb1fd-c1df-473b-92b7-bfebb0e6fc1a": {
+    "label": "Villa Chella — 49288 Sherman Drive",
+    "gates": [
+      {
+        "gate": "proptia",
+        "label": "49288 Sherman Drive",
+        "communityId": "c6a03a52-d79e-4744-b24e-59341978ca83",
+        "propertyId": "6d99ee4c-5125-11f0-bfe5-0022480abcad",
+        "unitId": "e5118bf6-e2ba-498d-8396-8da84529c6cb",
+        "memberId": "c94a3f4d-3bc5-49d8-b149-8f1fa40c0eae",
+        "passName": "5f5b814b-ac9a-4243-9a3d-439c5ea57096"
+      }
+    ]
+  },
+  "ba9dba92-83db-40a7-9a8e-dc6aa7232b51": {
+    "label": "Condo on the Green — 82567 Avenue 48 #33",
+    "gates": [
+      {
+        "gate": "proptia",
+        "label": "82567 Avenue 48 #33",
+        "communityId": "39d8e20f-2a05-463e-a8ec-84f1f180b0bd",
+        "propertyId": "6d99ee4c-5125-11f0-bfe5-0022480abcad",
+        "unitId": "e5118bf6-e2ba-498d-8396-8da84529c6cb",
+        "memberId": "496c134f-a7ab-4537-9332-a1e8f0991e66",
+        "passName": "5f5b814b-ac9a-4243-9a3d-439c5ea57096"
+      }
+    ]
+  },
+  "ec4e291f-e51a-4e39-9e83-b439ecb4f312": {
+    "label": "Desert Sky Outpost — 43295 Passagio Lago Way",
+    "gates": [
+      {
+        "gate": "goaccess",
+        "label": "43295 Passagio Lago Way",
+        "communityId": 12,
+        "householdId": 44928,
+        "residentId": "0fac128a-2849-460f-8deb-8c41df7bf559",
+        "visitorTypeId": "cd2ad43d-2abd-46fe-aee7-6a23069ac2ff"
+      }
+    ]
+  }
+}
