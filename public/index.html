@@ -179,6 +179,7 @@
   }
   .cal-cell .cnt-wrap{position:absolute;right:5px;bottom:4px;display:flex;gap:2px}
   .cal-cell .cnt.done{background:rgba(16,185,129,.18);color:#10b981}
+  .cal-cell .cnt.part{background:rgba(245,158,11,.18);color:#f59e0b}
   .cal-cell .cnt.todo{background:rgba(239,68,68,.18);color:#ef4444}
   .cal-cell.empty{background:transparent;border-color:transparent}
   .name-row .pin{
@@ -507,9 +508,10 @@ async function loadCalendar(){
     const cls = 'cal-cell'+(total>0?' has':'')+(ds===todayStr?' today':'');
     let chips = '';
     if(c){
-      const notDone = c.none + c.some + (c.unknown||0); // anything not fully added
       if(c.all>0)  chips += '<span class="cnt done" title="fully added">'+c.all+'</span>';
-      if(notDone>0) chips += '<span class="cnt todo" title="still needs names">'+notDone+'</span>';
+      if(c.some>0) chips += '<span class="cnt part" title="partially added">'+c.some+'</span>';
+      const none = c.none + (c.unknown||0);
+      if(none>0)   chips += '<span class="cnt todo" title="not added">'+none+'</span>';
     }
     html += '<div class="'+cls+'" data-date="'+ds+'">'
           + '<span class="d">'+d+'</span>'
