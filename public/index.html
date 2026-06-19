@@ -143,6 +143,16 @@
     border-radius:6px;padding:6px 8px;font-family:inherit;font-size:13px;
   }
   .name-row .nm-input:focus{outline:none;border-color:#2a3a4d;background:#11161d}
+  .name-row .nm-remove{
+    flex:0 0 auto;background:transparent;border:0;color:#64748b;cursor:pointer;
+    font-size:18px;line-height:1;padding:0 4px;
+  }
+  .name-row .nm-remove:hover{color:#ef4444}
+  .btn.ghost.add-name{
+    margin-top:8px;background:transparent;border:1px dashed #2a333f;color:#94a3b8;
+    padding:7px 12px;font-size:13px;border-radius:8px;cursor:pointer;
+  }
+  .btn.ghost.add-name:hover{border-color:#10b981;color:#10b981}
   .calendar{
     background:#11161d;border:1px solid #1f2730;border-radius:12px;
     padding:14px;margin-bottom:16px;
@@ -165,9 +175,11 @@
   .cal-cell .d{font-size:12px;color:#94a3b8}
   .cal-cell.today .d{color:#10b981;font-weight:700}
   .cal-cell .cnt{
-    position:absolute;right:5px;bottom:4px;font-size:12px;font-weight:700;
-    background:rgba(16,185,129,.18);color:#10b981;border-radius:9px;padding:1px 7px;
+    font-size:11px;font-weight:700;border-radius:9px;padding:1px 6px;margin-left:3px;
   }
+  .cal-cell .cnt-wrap{position:absolute;right:5px;bottom:4px;display:flex;gap:2px}
+  .cal-cell .cnt.done{background:rgba(16,185,129,.18);color:#10b981}
+  .cal-cell .cnt.todo{background:rgba(239,68,68,.18);color:#ef4444}
   .cal-cell.empty{background:transparent;border-color:transparent}
   .name-row .pin{
     font-family:'Spline Sans Mono',monospace;font-size:13px;color:var(--gold);
@@ -315,40 +327,58 @@ function reservationCard(r){
   card.appendChild(head);
 
   const names = el('div','names');
+  const h4 = el('h4',null,'Drivers'); names.appendChild(h4);
+  const rowWrap = el('div','name-rows');
+  names.appendChild(rowWrap);
+  card._nameRows = [];
+
+  // Reusable editable row. `n` may carry onGates status for the badge.
+  function makeNameRow(n){
+    n = n || {firstName:'',lastName:'',onGates:{}};
+    const row = el('div','name-row editable');
+    const cb = document.createElement('input');
+    cb.type='checkbox'; cb.checked=true; cb.className='nm-check';
+    row.appendChild(cb);
+    const first = document.createElement('input');
+    first.type='text'; first.className='nm-input'; first.placeholder='First'; first.value=n.firstName||'';
+    const last = document.createElement('input');
+    last.type='text'; last.className='nm-input'; last.placeholder='Last'; last.value=n.lastName||'';
+    row.appendChild(first); row.appendChild(last);
+    // status badge (only meaningful for originally-parsed names)
+    if(r.gateCheck && r.gates && r.gates.length && n.onGates){
+      const labels = r.gates.map(g=>g.label);
+      const states = labels.map(l=>n.onGates[l]);
+      const known = states.filter(s=>s===true||s===false);
+      const onCount = states.filter(s=>s===true).length;
+      if(known.length===0){ row.appendChild(el('span','badge unk','—')); }
+      else if(onCount===labels.length){ row.appendChild(el('span','badge on','on gate')); }
+      else if(onCount>0){ row.appendChild(el('span','badge part', onCount+'/'+labels.length+' gates')); }
+      else { row.appendChild(el('span','badge new','not added')); }
+    }
+    // remove button
+    const rm = el('button','nm-remove','×'); rm.title='Remove';
+    rm.onclick=()=>{ row.remove(); card._nameRows = card._nameRows.filter(x=>x.row!==row); };
+    row.appendChild(rm);
+    rowWrap.appendChild(row);
+    card._nameRows.push({cb, first, last, row});
+  }
+
   if(r.nameCount===0){
-    names.appendChild(el('div','stay','No driver-names block found in notes.'));
+    names.insertBefore(el('div','stay','No names parsed — add manually if needed.'), rowWrap);
   } else {
-    const h4 = el('h4',null,'Drivers'); names.appendChild(h4);
     const statusList = r.namesWithStatus || r.names.map(n=>({firstName:n.firstName,lastName:n.lastName,onGates:{}}));
-    card._nameRows = []; // collected for the add action
-    statusList.forEach((n,i)=>{
-      const row = el('div','name-row editable');
-      const cb = document.createElement('input');
-      cb.type='checkbox'; cb.checked=true; cb.className='nm-check';
-      row.appendChild(cb);
-      const first = document.createElement('input');
-      first.type='text'; first.className='nm-input'; first.value=n.firstName||'';
-      const last = document.createElement('input');
-      last.type='text'; last.className='nm-input'; last.value=n.lastName||'';
-      row.appendChild(first); row.appendChild(last);
-      // status badge (unchanged)
-      if(r.gateCheck && r.gates && r.gates.length){
-        const labels = r.gates.map(g=>g.label);
-        const states = labels.map(l=>n.onGates ? n.onGates[l] : undefined);
-        const known = states.filter(s=>s===true||s===false);
-        const onCount = states.filter(s=>s===true).length;
-        if(known.length===0){ row.appendChild(el('span','badge unk','—')); }
-        else if(onCount===labels.length){ row.appendChild(el('span','badge on','on gate')); }
-        else if(onCount>0){ row.appendChild(el('span','badge part', onCount+'/'+labels.length+' gates')); }
-        else { row.appendChild(el('span','badge new','not added')); }
-      }
-      names.appendChild(row);
-      card._nameRows.push({cb, first, last});
-    });
+    statusList.forEach(n=>makeNameRow(n));
+  }
+
+  // "+ Add name" button (for splitting "Jon & Kathy" into two, or extras).
+  if(r.mapped){
+    const addRow = el('button','btn ghost add-name','+ Add name');
+    addRow.onclick=()=>makeNameRow();
+    names.appendChild(addRow);
   }
   card.appendChild(names);
 
-  if(r.mapped && r.nameCount>0){
+  if(r.mapped){
     const foot = el('div','card-foot');
     const msg = el('span','msg',''); foot.appendChild(msg);
     const act = el('button','btn primary act'+(state.mode==='live'?' live':''),
@@ -472,11 +502,18 @@ async function loadCalendar(){
   for(let i=0;i<firstDow;i++) html+='<div class="cal-cell empty"></div>';
   for(let d=1; d<=days; d++){
     const ds = calYear+'-'+pad(calMonth)+'-'+pad(d);
-    const c = counts[ds]||0;
-    const cls = 'cal-cell'+(c>0?' has':'')+(ds===todayStr?' today':'');
+    const c = counts[ds]; // {all, some, none, unknown} or undefined
+    const total = c ? (c.all+c.some+c.none+(c.unknown||0)) : 0;
+    const cls = 'cal-cell'+(total>0?' has':'')+(ds===todayStr?' today':'');
+    let chips = '';
+    if(c){
+      const notDone = c.none + c.some + (c.unknown||0); // anything not fully added
+      if(c.all>0)  chips += '<span class="cnt done" title="fully added">'+c.all+'</span>';
+      if(notDone>0) chips += '<span class="cnt todo" title="still needs names">'+notDone+'</span>';
+    }
     html += '<div class="'+cls+'" data-date="'+ds+'">'
           + '<span class="d">'+d+'</span>'
-          + (c>0?'<span class="cnt">'+c+'</span>':'')
+          + '<span class="cnt-wrap">'+chips+'</span>'
           + '</div>';
   }
   html += '</div>';

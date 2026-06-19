@@ -13,6 +13,34 @@ const propertyMap = require('./propertyMap');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Short-lived cache of gate visitor name-key sets, so the calendar (and repeated
+// arrivals loads) don't re-login to each gate constantly. Keyed per gate target.
+const GATE_CACHE_TTL_MS = Number(process.env.GATE_CACHE_TTL_MS || 60000); // 60s
+const _gateCache = new Map(); // cacheKey -> { at:ms, keys:Set|null }
+
+async function getGateKeysCached(gates, target, nameKey) {
+  const cacheKey = `${target.gate}|${target.config.communityId || ''}|${target.config.householdId || ''}|${target.config.residentId || ''}`;
+  const hit = _gateCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < GATE_CACHE_TTL_MS) return hit.keys;
+  let keys = new Set();
+  try {
+    const client = await gates.get(target.gate);
+    const visitors = await client.listVisitors(target.config);
+    for (const v of visitors) {
+      if (v.first_name !== undefined) keys.add(nameKey(v.first_name, v.last_name));
+      else if (v.name) {
+        const parts = String(v.name).trim().split(/\s+/);
+        keys.add(nameKey(parts[0] || '', parts.slice(1).join(' ')));
+      }
+    }
+  } catch (e) {
+    console.warn(`[gate-cache] read failed for ${target.label}: ${e.message}`);
+    keys = null; // null = couldn't check
+  }
+  _gateCache.set(cacheKey, { at: Date.now(), keys });
+  return keys;
+}
+
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -384,15 +412,40 @@ app.get('/api/calendar', checkToken, async (req, res) => {
     });
     const reservations = await hostfully.getReservationsInRange(from, to);
 
-    const counts = {}; // 'YYYY-MM-DD' -> number of mapped reservations w/ names
+    const { getGateTargets, makeGateManager, nameKey } = require('./orchestrator');
+    const gates = makeGateManager(console, { login: true });
+
+    // Per day: { all, some, none } counts of mapped reservations needing names.
+    //   all  = every name already on every gate (done) -> green
+    //   some = at least one name on a gate, but not all -> amber
+    //   none = nobody added yet -> red
+    const counts = {};
     for (const r of reservations) {
       const prop = propertyMap[r.propertyUid];
       if (!prop) continue; // mapped only
       const day = (r.arrivalDate || '').slice(0, 10);
       if (!day) continue;
       const parsed = parseGateNames(r.notes);
-      if (parsed.names.length === 0) continue; // only days that need names added
-      counts[day] = (counts[day] || 0) + 1;
+      if (parsed.names.length === 0) continue; // only reservations that need names
+      const targets = getGateTargets(prop);
+
+      // Across all (name × gate) slots, how many are already present?
+      let totalSlots = 0;
+      let filledSlots = 0;
+      let anyUnknown = false;
+      for (const t of targets) {
+        const keys = await getGateKeysCached(gates, t, nameKey);
+        for (const n of parsed.names) {
+          totalSlots += 1;
+          if (keys === null) { anyUnknown = true; continue; }
+          if (keys.has(nameKey(n.firstName, n.lastName))) filledSlots += 1;
+        }
+      }
+      if (!counts[day]) counts[day] = { all: 0, some: 0, none: 0, unknown: 0 };
+      if (anyUnknown && filledSlots === 0) counts[day].unknown += 1;
+      else if (filledSlots === 0) counts[day].none += 1;
+      else if (filledSlots >= totalSlots) counts[day].all += 1;
+      else counts[day].some += 1;
     }
     res.json({ year, month, counts });
   } catch (e) {
