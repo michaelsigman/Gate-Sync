@@ -82,15 +82,21 @@ class GoAccessClient {
    * per-resident; we filter to this household and to currently-valid passes.
    */
   async listVisitors(prop) {
-    // The resident endpoint returns the household's visitors.
+    // The resident endpoint returns the household (with all its visitors).
     const res = await this.http.get(
       `${BACKEND}/api/v1/residents/${prop.residentId}`,
       { headers: this._auth() }
     );
-    // Shape is { data: { data: {... visitors: [...] }}} in this API; be defensive.
-    const body = res.data?.data?.data || res.data?.data || res.data || {};
-    const visitors = body.visitors || body.household?.visitors || [];
-    return Array.isArray(visitors) ? visitors : [];
+    // Real shape: data.data.household_info[0].visitor_info[] — each visitor has
+    // a single `name` field (full name), plus start/end dates and an archive flag.
+    const root = res.data?.data?.data || res.data?.data || res.data || {};
+    const households = root.household_info || root.households || [];
+    const household = Array.isArray(households) ? households[0] : households;
+    const visitors =
+      (household && (household.visitor_info || household.visitors)) || [];
+    if (!Array.isArray(visitors)) return [];
+    // Skip archived/banned entries — they're not active on the gate.
+    return visitors.filter((v) => !v.archive && !v.banned);
   }
 
   /**
