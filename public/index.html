@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Gate Sync — BookedUp</title>
+<title>Gate Pilot — Automated Community Access</title>
+<link rel="icon" type="image/png" href="/assets/gate-pilot-logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Spline+Sans+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0e1217; --panel:#161c24; --panel-2:#1c242e; --line:#28323e;
-    --ink:#e8edf2; --ink-dim:#9aa7b4; --ink-faint:#637084;
-    --accent:#4cc2a0;          /* safe / dry-run */
+    --bg:#0d1320; --panel:#151d2c; --panel-2:#1b2536; --line:#2a3547;
+    --ink:#e8edf2; --ink-dim:#9aa7b4; --ink-faint:#6b7889;
+    --accent:#3aa93a;          /* Gate Pilot green — safe / dry-run */
     --armed:#e0533d;           /* live / armed */
     --armed-soft:#3a1f1c;
     --gold:#d9a441;
@@ -30,6 +31,7 @@
     position:sticky;top:0;background:rgba(14,18,23,.92);backdrop-filter:blur(8px);z-index:10;
   }
   .brand{display:flex;align-items:center;gap:12px}
+  .brand-logo{height:44px;width:auto;display:block}
   .sigil{width:30px;height:30px;flex:none}
   .brand h1{font-size:16px;font-weight:600;margin:0;letter-spacing:.2px}
   .brand .sub{font-size:12px;color:var(--ink-faint);margin-top:1px}
@@ -132,12 +134,12 @@
     font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;
     margin-left:8px;white-space:nowrap;
   }
-  .name-row .badge.on{background:rgba(16,185,129,.18);color:#10b981}
+  .name-row .badge.on{background:rgba(58,169,58,.18);color:#3aa93a}
   .name-row .badge.part{background:rgba(245,158,11,.18);color:#f59e0b}
   .name-row .badge.new{background:rgba(148,163,184,.14);color:#94a3b8}
   .name-row .badge.unk{background:rgba(148,163,184,.10);color:#64748b}
   .name-row.editable{gap:8px}
-  .name-row .nm-check{width:16px;height:16px;accent-color:#10b981;cursor:pointer;flex:0 0 auto}
+  .name-row .nm-check{width:16px;height:16px;accent-color:#3aa93a;cursor:pointer;flex:0 0 auto}
   .name-row .nm-input{
     flex:1 1 0;min-width:0;background:#0e1319;border:1px solid #232c37;color:#e2e8f0;
     border-radius:6px;padding:6px 8px;font-family:inherit;font-size:13px;
@@ -152,7 +154,7 @@
     margin-top:8px;background:transparent;border:1px dashed #2a333f;color:#94a3b8;
     padding:7px 12px;font-size:13px;border-radius:8px;cursor:pointer;
   }
-  .btn.ghost.add-name:hover{border-color:#10b981;color:#10b981}
+  .btn.ghost.add-name:hover{border-color:#3aa93a;color:#3aa93a}
   .calendar{
     background:#11161d;border:1px solid #1f2730;border-radius:12px;
     padding:14px;margin-bottom:16px;
@@ -173,12 +175,12 @@
   .cal-cell.has{cursor:pointer;border-color:#2a3a4d}
   .cal-cell.has:hover{background:#141b24}
   .cal-cell .d{font-size:12px;color:#94a3b8}
-  .cal-cell.today .d{color:#10b981;font-weight:700}
+  .cal-cell.today .d{color:#3aa93a;font-weight:700}
   .cal-cell .cnt{
     font-size:11px;font-weight:700;border-radius:9px;padding:1px 6px;margin-left:3px;
   }
   .cal-cell .cnt-wrap{position:absolute;right:5px;bottom:4px;display:flex;gap:2px}
-  .cal-cell .cnt.done{background:rgba(16,185,129,.18);color:#10b981}
+  .cal-cell .cnt.done{background:rgba(58,169,58,.18);color:#3aa93a}
   .cal-cell .cnt.part{background:rgba(245,158,11,.18);color:#f59e0b}
   .cal-cell .cnt.todo{background:rgba(239,68,68,.18);color:#ef4444}
   .cal-cell.empty{background:transparent;border-color:transparent}
@@ -225,15 +227,10 @@
 <body>
 <header>
   <div class="brand">
-    <svg class="sigil" viewBox="0 0 32 32" fill="none">
-      <rect x="3" y="13" width="26" height="3" rx="1.5" fill="#4cc2a0"/>
-      <rect x="3" y="6" width="3" height="20" rx="1.5" fill="#637084"/>
-      <rect x="26" y="6" width="3" height="20" rx="1.5" fill="#637084"/>
-      <circle cx="16" cy="22" r="3.4" fill="none" stroke="#d9a441" stroke-width="2"/>
-    </svg>
+    <img class="brand-logo" src="/assets/gate-pilot-logo.png" alt="Gate Pilot" />
     <div>
-      <h1>Gate Sync</h1>
-      <div class="sub">BookedUp guest access</div>
+      <h1>Gate Pilot</h1>
+      <div class="sub">Automated Community Access</div>
     </div>
   </div>
   <span id="stateChip" class="statechip dry">Dry-run — nothing is written</span>
