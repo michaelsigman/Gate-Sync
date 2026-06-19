@@ -136,6 +136,13 @@
   .name-row .badge.part{background:rgba(245,158,11,.18);color:#f59e0b}
   .name-row .badge.new{background:rgba(148,163,184,.14);color:#94a3b8}
   .name-row .badge.unk{background:rgba(148,163,184,.10);color:#64748b}
+  .name-row.editable{gap:8px}
+  .name-row .nm-check{width:16px;height:16px;accent-color:#10b981;cursor:pointer;flex:0 0 auto}
+  .name-row .nm-input{
+    flex:1 1 0;min-width:0;background:#0e1319;border:1px solid #232c37;color:#e2e8f0;
+    border-radius:6px;padding:6px 8px;font-family:inherit;font-size:13px;
+  }
+  .name-row .nm-input:focus{outline:none;border-color:#2a3a4d;background:#11161d}
   .calendar{
     background:#11161d;border:1px solid #1f2730;border-radius:12px;
     padding:14px;margin-bottom:16px;
@@ -313,28 +320,30 @@ function reservationCard(r){
   } else {
     const h4 = el('h4',null,'Drivers'); names.appendChild(h4);
     const statusList = r.namesWithStatus || r.names.map(n=>({firstName:n.firstName,lastName:n.lastName,onGates:{}}));
+    card._nameRows = []; // collected for the add action
     statusList.forEach((n,i)=>{
-      const row = el('div','name-row');
-      row.appendChild(el('span','idx', String(i+1).padStart(2,'0')));
-      row.appendChild(el('span','nm', (n.firstName+' '+(n.lastName||'')).trim()));
-      // Already-on-gate badge: green if on ALL gates, amber if on some, none if not.
+      const row = el('div','name-row editable');
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked=true; cb.className='nm-check';
+      row.appendChild(cb);
+      const first = document.createElement('input');
+      first.type='text'; first.className='nm-input'; first.value=n.firstName||'';
+      const last = document.createElement('input');
+      last.type='text'; last.className='nm-input'; last.value=n.lastName||'';
+      row.appendChild(first); row.appendChild(last);
+      // status badge (unchanged)
       if(r.gateCheck && r.gates && r.gates.length){
         const labels = r.gates.map(g=>g.label);
         const states = labels.map(l=>n.onGates ? n.onGates[l] : undefined);
         const known = states.filter(s=>s===true||s===false);
         const onCount = states.filter(s=>s===true).length;
-        if(known.length===0){
-          // couldn't check any gate
-          row.appendChild(el('span','badge unk','—'));
-        } else if(onCount===labels.length){
-          row.appendChild(el('span','badge on','on gate'));
-        } else if(onCount>0){
-          row.appendChild(el('span','badge part', onCount+'/'+labels.length+' gates'));
-        } else {
-          row.appendChild(el('span','badge new','not added'));
-        }
+        if(known.length===0){ row.appendChild(el('span','badge unk','—')); }
+        else if(onCount===labels.length){ row.appendChild(el('span','badge on','on gate')); }
+        else if(onCount>0){ row.appendChild(el('span','badge part', onCount+'/'+labels.length+' gates')); }
+        else { row.appendChild(el('span','badge new','not added')); }
       }
       names.appendChild(row);
+      card._nameRows.push({cb, first, last});
     });
   }
   card.appendChild(names);
@@ -353,12 +362,18 @@ function reservationCard(r){
 
 async function processCard(r, card, btn, msg){
   const live = state.mode==='live';
+  // Collect checked + edited names from the editable rows.
+  const selected = (card._nameRows||[])
+    .filter(x=>x.cb.checked)
+    .map(x=>({firstName:x.first.value.trim(), lastName:x.last.value.trim()}))
+    .filter(n=>n.firstName||n.lastName);
+  if(selected.length===0){ toast('No names selected'); return; }
   const gateCount = (r.gateCount||1);
-  if(live && !confirm('Add '+r.nameCount+' guest(s) to '+gateCount+' gate(s) for '+r.property+'?\\nThis creates real passes.')) return;
+  if(live && !confirm('Add '+selected.length+' guest(s) to '+gateCount+' gate(s) for '+r.property+'?\\nThis creates real passes.')) return;
   btn.disabled=true; msg.innerHTML='<span class="spin"></span> '+(live?'Adding…':'Previewing…');
   try{
     const res = await fetch('/api/process',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({dryRun:!live, reservation:{
+      body:JSON.stringify({dryRun:!live, names:selected, reservation:{
         reservationId:r.reservationId, propertyUid:r.propertyUid,
         arrivalDate:r.arrivalDate, departureDate:r.departureDate,
         notes:r.notes||''

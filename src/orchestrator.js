@@ -270,8 +270,21 @@ async function run({ logger = console } = {}) {
  * plan/result without logging. `clients` is a map of gate->client (may be empty
  * in dry-run). Handles properties that target multiple gates.
  */
-async function processReservation({ reservation, prop, clients = {}, dryRun }) {
-  const parsed = parseGateNames(reservation.notes);
+async function processReservation({ reservation, prop, clients = {}, dryRun, names }) {
+  // If the caller supplies an explicit `names` list (e.g. the UI after the
+  // operator edited/checked names), use it. Otherwise parse from the notes.
+  let parsed;
+  if (Array.isArray(names)) {
+    const clean = names
+      .map((n) => ({
+        firstName: String(n.firstName || '').trim(),
+        lastName: String(n.lastName || '').trim(),
+      }))
+      .filter((n) => n.firstName || n.lastName);
+    parsed = { names: clean, guest: parseGateNames(reservation.notes).guest };
+  } else {
+    parsed = parseGateNames(reservation.notes);
+  }
   const arrival = reservation.arrivalDate;     // YYYY-MM-DD string
   const departure = reservation.departureDate; // YYYY-MM-DD string
   const targets = getGateTargets(prop);

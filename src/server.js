@@ -409,7 +409,12 @@ app.post('/api/parse', checkToken, (req, res) => {
 // --- API: process one reservation (dry-run or live) ---
 app.post('/api/process', checkToken, async (req, res) => {
   try {
-    const { reservation, dryRun = true } = req.body;
+    const { reservation, dryRun = true, names } = req.body;
+    // Master safety: if the server is set to DRY_RUN=true, force dry-run
+    // regardless of what the UI toggle requested. This lets you hard-lock the
+    // deployment to preview-only via env, independent of the (Live-default) UI.
+    const serverForcesDry = String(process.env.DRY_RUN).toLowerCase() === 'true';
+    const effectiveDryRun = serverForcesDry ? true : !!dryRun;
     if (!reservation || !reservation.propertyUid) {
       return res.status(400).json({ error: 'reservation with propertyUid required' });
     }
@@ -418,7 +423,7 @@ app.post('/api/process', checkToken, async (req, res) => {
 
     const { getGateTargets } = require('./orchestrator');
     const clients = {};
-    if (!dryRun) {
+    if (!effectiveDryRun) {
       const gates = makeGateManager(console, { login: true });
       // Log in once per distinct gate vendor this property targets.
       const vendors = [...new Set(getGateTargets(prop).map((t) => t.gate))];
@@ -428,8 +433,11 @@ app.post('/api/process', checkToken, async (req, res) => {
       reservation,
       prop,
       clients,
-      dryRun: !!dryRun,
+      dryRun: effectiveDryRun,
+      names: Array.isArray(names) ? names : undefined,
     });
+    // Tell the UI if the server overrode its request, so it can show a notice.
+    if (serverForcesDry && !dryRun) out.serverForcedDryRun = true;
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message });
