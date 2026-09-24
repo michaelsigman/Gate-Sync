@@ -3,8 +3,7 @@ require('dotenv').config();
 
 const { ProptiaClient } = require('./proptiaClient');
 const { GoAccessClient } = require('./goAccessClient');
-const { HostfullyClient } = require('./hostfullyClient');
-const { parseGateNames } = require('./parseNotes');
+const { makeSource, sourceName, gateNamesFor } = require('./reservations');
 const propertyMap = require('./propertyMap');
 const store = require('./store');
 
@@ -214,14 +213,8 @@ async function run({ logger = console } = {}) {
     `[gate-sync] ${DRY_RUN ? 'DRY-RUN' : 'LIVE'} — arrivals on ${fmtYYYYMMDD(tomorrow)}`
   );
 
-  const hostfully = new HostfullyClient({
-    apiKey: process.env.HOSTFULLY_API_KEY,
-    agencyUid: process.env.HOSTFULLY_AGENCY_UID,
-    logger,
-  });
-
-  const reservations = await hostfully.getReservationsArriving(fmtYYYYMMDD(tomorrow), { logger });
-  logger.info(`[gate-sync] ${reservations.length} reservation(s) arriving tomorrow`);
+  const reservations = await makeSource().getReservationsArriving(fmtYYYYMMDD(tomorrow), { logger });
+  logger.info(`[gate-sync] ${reservations.length} reservation(s) arriving tomorrow (source: ${sourceName()})`);
 
   const actionable = reservations.filter((r) => propertyMap[r.propertyUid]);
   if (actionable.length === 0) {
@@ -243,7 +236,7 @@ async function run({ logger = console } = {}) {
 
   for (const res of actionable) {
     const prop = propertyMap[res.propertyUid];
-    const parsed = parseGateNames(res.notes);
+    const parsed = gateNamesFor(res);
     const targets = getGateTargets(prop);
 
     logger.info(`\n=== ${prop.label || res.propertyUid} | res ${res.reservationId} | ${targets.length} gate(s) ===`);
@@ -325,7 +318,7 @@ async function run({ logger = console } = {}) {
  */
 async function processReservation({ reservation, prop, clients = {}, dryRun, names, source = 'manual' }) {
   // If the caller supplies an explicit `names` list (e.g. the UI after the
-  // operator edited/checked names), use it. Otherwise parse from the notes.
+  // operator edited/checked names), use it. Otherwise guest-submitted drivers, else notes.
   let parsed;
   if (Array.isArray(names)) {
     const clean = names
@@ -334,9 +327,9 @@ async function processReservation({ reservation, prop, clients = {}, dryRun, nam
         lastName: String(n.lastName || '').trim(),
       }))
       .filter((n) => n.firstName || n.lastName);
-    parsed = { names: clean, guest: parseGateNames(reservation.notes).guest };
+    parsed = { names: clean, guest: gateNamesFor(reservation).guest };
   } else {
-    parsed = parseGateNames(reservation.notes);
+    parsed = gateNamesFor(reservation);
   }
   const arrival = reservation.arrivalDate;     // YYYY-MM-DD string
   const departure = reservation.departureDate; // YYYY-MM-DD string

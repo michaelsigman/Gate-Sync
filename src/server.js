@@ -6,11 +6,11 @@ const path = require('path');
 const express = require('express');
 const cron = require('node-cron');
 const { run, processReservation, makeGateManager } = require('./orchestrator');
-const { HostfullyClient } = require('./hostfullyClient');
 const { parseGateNames } = require('./parseNotes');
 const propertyMap = require('./propertyMap');
 const store = require('./store');
 const gateCache = require('./gateCache');
+const { makeSource, sourceName, gateNamesFor } = require('./reservations');
 const { getGateTargets, nameKey } = require('./orchestrator');
 
 const app = express();
@@ -284,25 +284,22 @@ function isoOffset(base, days) {
 }
 
 // --- Arrivals: shared enrichment (gate status comes from the shared cache) ---
-// Hostfully range reads are cached briefly so many viewers = one PMS call.
-const HOSTFULLY_CACHE_MS = 60 * 1000;
-const _hostfullyCache = new Map(); // "from|to" -> { at, promise }
+// Reservation reads (ArrivalPilot feed, or Hostfully fallback) are cached briefly so many
+// viewers = one upstream call.
+const SOURCE_CACHE_MS = 60 * 1000;
+const _sourceCache = new Map(); // "from|to" -> { at, promise }
 function reservationsInRange(from, to) {
   const k = `${from}|${to}`;
-  const hit = _hostfullyCache.get(k);
-  if (hit && Date.now() - hit.at < HOSTFULLY_CACHE_MS) return hit.promise;
-  const hostfully = new HostfullyClient({
-    apiKey: process.env.HOSTFULLY_API_KEY,
-    agencyUid: process.env.HOSTFULLY_AGENCY_UID,
-  });
-  const promise = hostfully.getReservationsInRange(from, to);
-  _hostfullyCache.set(k, { at: Date.now(), promise });
-  promise.catch(() => _hostfullyCache.delete(k));
+  const hit = _sourceCache.get(k);
+  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.promise;
+  const promise = makeSource().getReservationsInRange(from, to);
+  _sourceCache.set(k, { at: Date.now(), promise });
+  promise.catch(() => _sourceCache.delete(k));
   return promise;
 }
 
 async function enrichReservation(r, prop, { checkGates = true } = {}) {
-  const parsed = parseGateNames(r.notes);
+  const parsed = gateNamesFor(r);
   const targets = getGateTargets(prop);
   let latestAdd = null;
   const namesWithStatus = [];
@@ -345,6 +342,8 @@ async function enrichReservation(r, prop, { checkGates = true } = {}) {
     // The parser always lists the booking guest first, so nameCount > 0 even when
     // no driver list was submitted. This says whether a driver list exists.
     hasDriverList: (parsed.blockCount || 0) > 0,
+    nameSource: parsed.source || null, // 'guest_form' | 'pms_notes' | 'none'
+    driversUpdatedAt: r.driversUpdatedAt || null,
     gateCheck: checkGates,
     addedAt: latestAdd, // most recent time WE added anyone for this reservation
     failures,           // open (unresolved) gate-push failures
@@ -418,6 +417,7 @@ app.get('/api/status', checkToken, (_req, res) => {
   const failures = store.recentFailures(50);
   res.json({
     serverMode: DRY_RUN ? 'preview-locked' : 'live-allowed',
+    reservationSource: sourceName(),
     communities: byCommunity.size,
     communityResults: [...byCommunity.values()],
     lastSyncAt: lastRun ? lastRun.finishedAt || lastRun.startedAt : null,
@@ -454,7 +454,7 @@ app.get('/api/calendar', checkToken, async (req, res) => {
       if (!prop) continue; // mapped only
       const day = (r.arrivalDate || '').slice(0, 10);
       if (!day) continue;
-      const parsed = parseGateNames(r.notes);
+      const parsed = gateNamesFor(r);
       if (parsed.names.length === 0) continue; // only reservations that need names
       const targets = getGateTargets(prop);
 
