@@ -11,6 +11,7 @@ const propertyMap = require('./propertyMap');
 const store = require('./store');
 const gateCache = require('./gateCache');
 const { makeSource, sourceName, gateNamesFor } = require('./reservations');
+const { eligibility } = require('./gatePolicy');
 const { getGateTargets, nameKey } = require('./orchestrator');
 
 const app = express();
@@ -331,7 +332,7 @@ async function enrichReservation(r, prop, { checkGates = true } = {}) {
     gates: targets.map((t) => ({ gate: t.gate, label: t.label, community: t.config.community || prop.community || null })),
     gateCount: targets.length,
     property: prop.label,
-    community: prop.community || (targets[0] && targets[0].config.community) || null,
+    community: r.communityName || prop.community || (targets[0] && targets[0].config.community) || null,
     arrivalDate: r.arrivalDate,
     departureDate: r.departureDate,
     notes: r.notes,
@@ -343,6 +344,7 @@ async function enrichReservation(r, prop, { checkGates = true } = {}) {
     // no driver list was submitted. This says whether a driver list exists.
     hasDriverList: (parsed.blockCount || 0) > 0,
     nameSource: parsed.source || null, // 'guest_form' | 'pms_notes' | 'none'
+    gatePilot: (({ ok, reason }) => ({ ok, reason }))(eligibility(r, prop)),
     driversUpdatedAt: r.driversUpdatedAt || null,
     gateCheck: checkGates,
     addedAt: latestAdd, // most recent time WE added anyone for this reservation
@@ -491,17 +493,24 @@ app.post('/api/parse', checkToken, (req, res) => {
 // --- API: process one reservation (dry-run or live) ---
 app.post('/api/process', checkToken, async (req, res) => {
   try {
-    const { reservation, dryRun = true, names } = req.body;
-    // Master safety: if the server is set to DRY_RUN=true, force dry-run
-    // regardless of what the UI toggle requested. This lets you hard-lock the
-    // deployment to preview-only via env, independent of the (Live-default) UI.
-    const serverForcesDry = String(process.env.DRY_RUN).toLowerCase() === 'true';
+    const { reservation: claimed, dryRun = true, names } = req.body;
+    // Master safety: unless DRY_RUN is exactly "false", force dry-run regardless of
+    // what the UI asked for. Same rule as the orchestrator (unset = preview).
+    const serverForcesDry = DRY_RUN;
     const effectiveDryRun = serverForcesDry ? true : !!dryRun;
-    if (!reservation || !reservation.propertyUid) {
-      return res.status(400).json({ error: 'reservation with propertyUid required' });
+    if (!claimed || !claimed.reservationId || !claimed.propertyUid || !ISO_DAY.test(String(claimed.arrivalDate || ''))) {
+      return res.status(400).json({ error: 'reservation with reservationId, propertyUid and arrivalDate required' });
     }
-    const prop = propertyMap[reservation.propertyUid];
+    const prop = propertyMap[claimed.propertyUid];
     if (!prop) return res.status(404).json({ error: 'property not mapped to a gate' });
+
+    // Don't trust the browser's copy (dates, Gate Pilot flag): re-read the stay from the source.
+    const day = String(claimed.arrivalDate).slice(0, 10);
+    const reservation = (await reservationsInRange(day, day))
+      .find((r) => r.reservationId === claimed.reservationId && r.propertyUid === claimed.propertyUid);
+    if (!reservation) return res.status(404).json({ error: 'reservation not found at the source' });
+    const elig = eligibility(reservation, prop);
+    if (!elig.ok) return res.status(403).json({ error: 'Gate Pilot is not on for this property: ' + elig.reason, code: 'GATE_NOT_ELIGIBLE' });
 
     const { getGateTargets } = require('./orchestrator');
     const clients = {};

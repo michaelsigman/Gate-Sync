@@ -475,7 +475,12 @@ function openFailures(r){ return (r.failures||[]).length ? r.failures : (state.f
 // Older servers don't send hasDriverList; fall back to "no names at all".
 function awaitingDrivers(r){ return r.hasDriverList===false || !r.nameCount; }
 
+// Gate Pilot rule: only properties with gate_pilot_enabled (and a configured gate) are automated.
+// Older servers don't send gatePilot; treat that as on so the page still works against them.
+function gatePilotOff(r){ return !!(r.gatePilot && r.gatePilot.ok === false); }
+
 function statusOf(r){
+  if(gatePilotOff(r)) return 'off';
   if(openFailures(r).length) return 'failed';
   if(state.addedAt[r.reservationId]) return 'added';
   if(awaitingDrivers(r)) return 'awaiting';
@@ -489,7 +494,7 @@ function statusOf(r){
   if(known.length===0) return 'unknown';
   return 'ready';
 }
-const STATUS_TEXT = {added:'Added', awaiting:'Awaiting driver name', failed:'Failed', partial:'Partly added', ready:'Ready to add', unknown:'Not verified'};
+const STATUS_TEXT = {added:'Added', awaiting:'Awaiting driver name', failed:'Failed', partial:'Partly added', ready:'Ready to add', unknown:'Not verified', off:'Gate Pilot off'};
 
 // ---- Data ----
 async function fetchRange(from, to){
@@ -532,6 +537,7 @@ function renderStats(){
   const c = {added:0, ready:0, awaiting:0, failed:0};
   all.forEach(r=>{
     const s = statusOf(r);
+    if(s==='off') return; // not automated; counted in Arrivals only
     if(s==='added') c.added++;
     else if(s==='awaiting') c.awaiting++;
     else if(s==='failed') c.failed++;
@@ -714,7 +720,9 @@ function detailPanel(r){
   }
   panel.appendChild(names);
 
-  if(r.mapped){
+  if(gatePilotOff(r)){
+    panel.appendChild(el('p','note','Gate Pilot is off for this property, so gate-sync won’t add anyone here. ('+r.gatePilot.reason+')'));
+  } else if(r.mapped){
     const foot = el('div','detail-foot');
     const msg = el('span','msg',''); foot.appendChild(msg);
     const act = el('button','btn primary act', state.mode==='live'?'Add to gate':'Preview add'); act.type='button';

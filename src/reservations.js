@@ -8,7 +8,9 @@
  * the old Hostfully-notes path.
  *
  * Both sources return the same shape:
- *   { reservationId, propertyUid, arrivalDate, departureDate, status, notes, drivers?, guest?, inHouse? }
+ *   { reservationId, propertyUid, arrivalDate, departureDate, status, notes, drivers?, guest?, inHouse?,
+ *     gatePilotEnabled?, gateEnabled? (interim name), hasGate?, communityName? }
+ * Hostfully carries no Gate Pilot switch, so under gatePolicy every Hostfully stay is off.
  */
 
 const axios = require('axios');
@@ -30,6 +32,7 @@ class ArrivalPilotFeed {
   async getReservationsInRange(from, to) {
     const res = await this.http.get('', { params: { from, to } });
     return (res.data.reservations || []).map((r) => ({
+      source: 'arrivalpilot', // gatePolicy: only feed stays can be Gate Pilot-on
       reservationId: r.reservationId,
       propertyUid: r.propertyUid,
       arrivalDate: r.arrivalDate,
@@ -40,6 +43,12 @@ class ArrivalPilotFeed {
       driversUpdatedAt: r.driversUpdatedAt || null,
       guest: r.guest || null,
       inHouse: !!r.inHouse,
+      // Gate Pilot switch from ArrivalPilot (gate_pilot_enabled). Passed through untouched;
+      // gatePolicy treats anything but exactly true as off.
+      gatePilotEnabled: r.gatePilotEnabled,
+      gateEnabled: r.gateEnabled,
+      hasGate: r.hasGate,
+      communityName: r.communityName || null,
     }));
   }
 

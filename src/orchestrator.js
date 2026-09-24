@@ -4,6 +4,7 @@ require('dotenv').config();
 const { ProptiaClient } = require('./proptiaClient');
 const { GoAccessClient } = require('./goAccessClient');
 const { makeSource, sourceName, gateNamesFor } = require('./reservations');
+const { eligibility, NotEligibleError } = require('./gatePolicy');
 const propertyMap = require('./propertyMap');
 const store = require('./store');
 
@@ -230,7 +231,7 @@ async function run({ logger = console } = {}) {
   const communities = {}; // community -> counts, for /api/status
   const tally = (prop, target, field) => {
     const name = communityOf(prop, target);
-    const c = (communities[name] = communities[name] || { community: name, added: 0, wouldAdd: 0, alreadyOnGate: 0, failed: 0, awaitingNames: 0 });
+    const c = (communities[name] = communities[name] || { community: name, added: 0, wouldAdd: 0, alreadyOnGate: 0, failed: 0, awaitingNames: 0, notEligible: 0 });
     c[field] += 1;
   };
 
@@ -240,6 +241,14 @@ async function run({ logger = console } = {}) {
     const targets = getGateTargets(prop);
 
     logger.info(`\n=== ${prop.label || res.propertyUid} | res ${res.reservationId} | ${targets.length} gate(s) ===`);
+
+    const elig = eligibility(res, prop);
+    if (!elig.ok) {
+      logger.info(`  not eligible (${elig.reason}) — skipping`);
+      tally(prop, targets[0], 'notEligible');
+      summary.push({ property: prop.label, added: [], skipped: 'not eligible: ' + elig.reason });
+      continue;
+    }
 
     if (parsed.names.length === 0) {
       logger.info('  no gate-name block in notes — skipping');
@@ -317,6 +326,10 @@ async function run({ logger = console } = {}) {
  * in dry-run). Handles properties that target multiple gates.
  */
 async function processReservation({ reservation, prop, clients = {}, dryRun, names, source = 'manual' }) {
+  // Gate Pilot rule: has a gate AND enabled, or nothing happens (preview included).
+  const elig = eligibility(reservation, prop);
+  if (!elig.ok) throw new NotEligibleError(elig.reason);
+
   // If the caller supplies an explicit `names` list (e.g. the UI after the
   // operator edited/checked names), use it. Otherwise guest-submitted drivers, else notes.
   let parsed;
