@@ -39,6 +39,11 @@
   .passes{list-style:none;padding:0;margin:0;text-align:left}
   .passes li{display:flex;justify-content:space-between;padding:12px 4px;border-top:1px solid var(--line)}
   .passes .pin{font:600 14px ui-monospace,monospace;color:var(--ok-ink)}
+  .passes .tag{display:inline-block;font:600 11px 'Inter';color:var(--brand);background:var(--brand-soft);border-radius:99px;padding:2px 8px;margin-left:6px;vertical-align:1px}
+  .deliv{padding-top:0;flex:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chips button{font:600 14px 'Inter';padding:9px 14px;border-radius:99px;border:1.5px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  .chips button[aria-checked="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
 </style>
 </head>
 <body>
@@ -54,7 +59,7 @@
     <button class="add" id="addBtn" type="button">+ Add driver</button>
     <p class="err" id="err" role="alert" hidden></p>
     <button class="submit" id="submitBtn" type="button">Submit to gate</button>
-    <p class="fine">Demo: names go on the real gate for 2 hours, tagged "Gate Pilot demo".</p>
+    <p class="fine">Demo: names go on the real gate for 2 hours (deliveries 1 hour), tagged "Gate Pilot demo".</p>
   </div>
   <div class="body" id="doneView" hidden>
     <div class="done">
@@ -63,12 +68,30 @@
       <p id="doneSub"></p>
       <ul class="passes" id="passes"></ul>
     </div>
+    <button class="add" id="moreBtn" type="button">+ Add another driver</button>
+    <div class="driver" id="moreForm" hidden>
+      <div class="top"><span>New driver</span><button class="rm" id="moreCancel" type="button">Cancel</button></div>
+      <label>First name<input id="moreFirst" maxlength="30" autocomplete="off"></label>
+      <label>Last name<input id="moreLast" maxlength="30" autocomplete="off"></label>
+      <button class="submit" id="moreSubmit" type="button">Add to gate</button>
+    </div>
+    <p class="err" id="moreErr" role="alert" hidden></p>
+  </div>
+  <div class="body deliv" id="deliveryBlock" hidden>
+    <button class="add" id="delivBtn" type="button">🛵 Expecting a delivery or ride?</button>
+    <div class="driver" id="delivForm" hidden>
+      <div class="top"><span>Delivery or ride · 1 hour</span><button class="rm" id="delivCancel" type="button">Cancel</button></div>
+      <div class="chips" id="delivChips" role="radiogroup" aria-label="Service"></div>
+      <label>Driver's name (optional)<input id="delivName" maxlength="40" autocomplete="off" placeholder="If you know it"></label>
+      <button class="submit" id="delivSubmit" type="button">Let them in for 1 hour</button>
+      <p class="err" id="delivErr" role="alert" hidden></p>
+    </div>
   </div>
 </div>
 <script>
 const $=(s)=>document.querySelector(s);
 const el=(t,c,x)=>{const e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;};
-let MAX=3, rows=[];
+let rows=[], SERVICES=[], service=null;
 const api=(p,o={})=>fetch(p,{...o,headers:{'Content-Type':'application/json'}}).then(async r=>{const b=await r.json().catch(()=>({})); if(!r.ok) throw new Error(b.error||('HTTP '+r.status)); return b;});
 const day=(iso)=>{const [y,m,d]=iso.split('-').map(Number); return new Date(y,m-1,d,12).toLocaleDateString(undefined,{month:'short',day:'numeric'});};
 const time=(iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
@@ -85,21 +108,63 @@ function draw(){
     }
     box.appendChild(d);
   });
-  $('#addBtn').disabled = rows.length>=MAX;
-  $('#addBtn').textContent = rows.length>=MAX ? 'Up to '+MAX+' drivers' : '+ Add driver';
 }
-$('#addBtn').onclick=()=>{ if(rows.length<MAX){ rows.push({firstName:'',lastName:''}); draw(); document.getElementById(`d${rows.length-1}-firstName`).focus(); } };
+$('#addBtn').onclick=()=>{ rows.push({firstName:'',lastName:''}); draw(); document.getElementById(`d${rows.length-1}-firstName`).focus(); };
 $('#submitBtn').onclick=async()=>{
   const e=$('#err'); e.hidden=true; const b=$('#submitBtn'); b.disabled=true; b.textContent='Adding to the gate…';
   try{
     const r=await api('/api/demo/submit',{method:'POST',body:JSON.stringify({drivers:rows})});
     if(!r.added.length) throw new Error((r.errors[0]&&r.errors[0].error)||'Nothing was added.');
-    $('#formView').hidden=true; $('#doneView').hidden=false;
-    $('#doneTitle').textContent="You're on the gate list for "+r.community;
-    $('#doneSub').textContent = 'Valid until '+time(r.added[0].until)+' today.' + (r.errors.length ? ' Not added: '+r.errors.map(x=>x.name).join(', ')+'.' : '');
-    const ul=$('#passes'); r.added.forEach(p=>{ const li=el('li'); li.appendChild(el('span',null,p.name)); li.appendChild(el('span','pin', p.pin ? 'Gate PIN '+p.pin : 'Added')); ul.appendChild(li); });
+    showOnGate(r.community, r.onGate, r.errors);
   }catch(err){ e.textContent=err.message; e.hidden=false; }
   finally{ b.disabled=false; b.textContent='Submit to gate'; }
+};
+
+// "Who's on the gate" view — stays open for adding more drivers and deliveries.
+function showOnGate(community, onGate, errors){
+  $('#formView').hidden=true; $('#doneView').hidden=false;
+  $('#doneTitle').textContent="You're on the gate list for "+community;
+  const nd = onGate.filter(p=>p.kind!=='delivery').length, nv = onGate.length - nd;
+  const parts = []; if(nd) parts.push(nd===1?'1 driver':nd+' drivers'); if(nv) parts.push(nv===1?'1 delivery':nv+' deliveries');
+  $('#doneSub').textContent = parts.join(' and ')+' on the gate today.'
+    + (errors && errors.length ? ' Not added: '+errors.map(x=>x.name).join(', ')+'.' : '');
+  const ul=$('#passes'); ul.textContent='';
+  onGate.forEach(p=>{ const li=el('li'); const n=el('span',null,p.name);
+    if(p.kind==='delivery') n.appendChild(el('span','tag','1 hr'));
+    li.appendChild(n);
+    li.appendChild(el('span','pin', (p.pin ? 'PIN '+p.pin+' · ' : '')+'until '+time(p.until))); ul.appendChild(li); });
+  $('#moreBtn').hidden = !$('#moreForm').hidden;
+}
+$('#moreBtn').onclick=()=>{ $('#moreBtn').hidden=true; $('#moreForm').hidden=false; $('#moreErr').hidden=true; $('#moreFirst').value=''; $('#moreLast').value=''; $('#moreFirst').focus(); };
+$('#moreCancel').onclick=()=>{ $('#moreForm').hidden=true; $('#moreBtn').hidden=false; $('#moreErr').hidden=true; };
+$('#moreSubmit').onclick=async()=>{
+  const e=$('#moreErr'); e.hidden=true; const b=$('#moreSubmit'); b.disabled=true; b.textContent='Adding to the gate…';
+  try{
+    const r=await api('/api/demo/submit',{method:'POST',body:JSON.stringify({drivers:[{firstName:$('#moreFirst').value,lastName:$('#moreLast').value}]})});
+    if(!r.added.length) throw new Error((r.errors[0]&&r.errors[0].error)||'Nothing was added.');
+    $('#moreForm').hidden=true;
+    showOnGate(r.community, r.onGate, r.errors);
+  }catch(err){ e.textContent=err.message; e.hidden=false; }
+  finally{ b.disabled=false; b.textContent='Add to gate'; }
+};
+// ---- Delivery or ride: a 1-hour pass ----
+function drawChips(){
+  const box=$('#delivChips'); box.textContent='';
+  SERVICES.forEach(sv=>{ const b=el('button',null,sv); b.type='button'; b.setAttribute('role','radio'); b.setAttribute('aria-checked', String(sv===service));
+    b.onclick=()=>{ service=sv; drawChips(); }; box.appendChild(b); });
+}
+$('#delivBtn').onclick=()=>{ $('#delivBtn').hidden=true; $('#delivForm').hidden=false; $('#delivErr').hidden=true; service=null; $('#delivName').value=''; drawChips(); };
+$('#delivCancel').onclick=()=>{ $('#delivForm').hidden=true; $('#delivBtn').hidden=false; };
+$('#delivSubmit').onclick=async()=>{
+  const e=$('#delivErr'); e.hidden=true;
+  if(!service){ e.textContent='Pick a service.'; e.hidden=false; return; }
+  const b=$('#delivSubmit'); b.disabled=true; b.textContent='Adding to the gate…';
+  try{
+    const r=await api('/api/demo/delivery',{method:'POST',body:JSON.stringify({service, name:$('#delivName').value})});
+    $('#delivForm').hidden=true; $('#delivBtn').hidden=false;
+    showOnGate(r.community, r.onGate, r.errors);
+  }catch(err){ e.textContent=err.message; e.hidden=false; }
+  finally{ b.disabled=false; b.textContent='Let them in for 1 hour'; }
 };
 function offline(){
   $('#formView').textContent='';
@@ -109,9 +174,12 @@ function offline(){
   $('#formView').appendChild(box);
 }
 api('/api/demo/state').then(s=>{
-  MAX=s.maxDrivers; const live=s.stays.find(x=>x.live);
+  SERVICES=s.deliveryServices||[]; const live=s.stays.find(x=>x.live);
   if(live) $('#stayDates').textContent=live.guest+' · '+day(live.checkIn)+' – '+day(live.checkOut);
   if(!s.settings.gateWrites) return offline();
+  $('#deliveryBlock').hidden=false;
+  const current = live ? (live.passes||[]).filter(p=>!p.expired) : [];
+  if(current.length) return showOnGate('Desert Sky Outpost', current, []); // reopened after submitting
   rows=s.prefill.map(p=>({...p})); draw();
 }).catch(err=>{ rows=[{firstName:'',lastName:''}]; draw(); $('#err').textContent=err.message; $('#err').hidden=false; });
 </script>

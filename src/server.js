@@ -578,6 +578,9 @@ app.get('/api/demo/state', (_req, res) => res.json(demo.publicState()));
 app.post('/api/demo/submit', async (req, res) => {
   try { res.json(await demo.submit(req.body && req.body.drivers)); } catch (e) { demoFail(res, e); }
 });
+app.post('/api/demo/delivery', async (req, res) => {
+  try { res.json(await demo.submitDelivery(req.body && req.body.service, req.body && req.body.name)); } catch (e) { demoFail(res, e); }
+});
 app.post('/api/demo/reset', async (_req, res) => {
   try { res.json(await demo.reset()); } catch (e) { demoFail(res, e); }
 });

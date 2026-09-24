@@ -6,7 +6,8 @@
  *   - Exactly ONE stay (the red one) ever writes to a gate, and only to Desert Sky Outpost's GoAccess
  *     household (checked on every write), with a 2-hour pass tagged "Gate Pilot demo" in notes.
  *   - Plain public links (no token). Gate writes happen only while DEMO_GATE_WRITES=true (on for show
- *     days, off after); otherwise the form says the demo is offline. 15 s between submits, 20/hour.
+ *     days, off after); otherwise the form says the demo is offline. No count or rate limits; guests
+ *     can keep adding drivers, and add 1-hour delivery/ride passes.
  *   - Its own state file — independent of DRY_RUN, AUTO_ADD and property modes, and never written to
  *     the dashboard's history.
  *   - Reset archives the demo passes through GoAccess only when DEMO_REMOVE=api (set after the
@@ -22,7 +23,9 @@ const DEMO_PROPERTY_UID = 'ec4e291f-e51a-4e39-9e83-b439ecb4f312'; // Desert Sky 
 const DEMO_HOUSEHOLD_ID = 44928;
 const DEMO_TAG = 'Gate Pilot demo';
 const PASS_MINUTES = 120;
-const MAX_DRIVERS = 3;
+// One-hour passes for a delivery or ride.
+const DELIVERY_SERVICES = ['Uber', 'Lyft', 'DoorDash', 'Instacart', 'Uber Eats', 'Amazon', 'Other'];
+const DELIVERY_MINUTES = 60;
 const NAME_MAX = 30;
 const STATE_PATH = process.env.DEMO_STATE_PATH || path.join(__dirname, '..', 'data', 'demo-state.json');
 
@@ -88,19 +91,26 @@ function publicState() {
   const now = Date.now();
   const active = state.passes.filter((p) => Date.parse(p.endISO) > now);
   const live = { ...liveStayBase(), status: state.passes.length ? 'added' : 'awaiting', drivers: state.passes.map((p) => p.name),
-    passes: state.passes.map((p) => ({ name: p.name, pin: p.pin || null, until: p.endISO, expired: Date.parse(p.endISO) <= now })) };
+    passes: state.passes.map(publicPass) };
   return {
     homes: HOMES,
     days: Array.from({ length: 10 }, (_, i) => dayOffset(i - 1)),
     today: dayOffset(0),
     stays: [...demoStays().map((s) => ({ ...s, status: 'added' })), live],
     prefill: PREFILL,
-    maxDrivers: MAX_DRIVERS,
     passMinutes: PASS_MINUTES,
+    deliveryServices: DELIVERY_SERVICES,
+    deliveryMinutes: DELIVERY_MINUTES,
     settings: settings(),
     activePasses: active.length,
   };
 }
+
+function publicPass(p) {
+  return { name: p.name, pin: p.pin || null, until: p.endISO, expired: Date.parse(p.endISO) <= Date.now(),
+    kind: p.kind || 'driver', service: p.service || null };
+}
+const isDelivery = (p) => p.kind === 'delivery';
 
 // ---- validation ----
 function fold(s) { return s.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/4/g, 'a').replace(/5/g, 's').replace(/\$/g, 's').replace(/@/g, 'a'); }
@@ -119,7 +129,6 @@ function cleanName(v, field, i) {
 }
 function validateDrivers(drivers) {
   if (!Array.isArray(drivers) || !drivers.length) throw new DemoError(400, 'Add at least one driver.');
-  if (drivers.length > MAX_DRIVERS) throw new DemoError(400, `Up to ${MAX_DRIVERS} drivers.`);
   const out = drivers.map((d, i) => ({ firstName: cleanName(d && d.firstName, 'first name', i), lastName: cleanName(d && d.lastName, 'last name', i) }));
   const seen = new Set();
   return out.filter((d) => { const k = (d.firstName + ' ' + d.lastName).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -143,24 +152,32 @@ async function goaccess() {
 // Serialize demo actions (submit / reset) so taps can't race.
 let chain = Promise.resolve();
 const serial = (fn) => { const p = chain.then(fn); chain = p.catch(() => {}); return p; };
-let lastSubmitAt = 0;
-let recentSubmits = [];
-const MAX_SUBMITS_PER_HOUR = 20;
+
+// The only gate on demo writes: DEMO_GATE_WRITES (on for show days). No count or rate limits (Mike, 2026-09-24).
+function admitWrite() {
+  if (!settings().gateWrites) throw new DemoError(503, 'The demo is offline right now.');
+}
+
+function onGateResult(added, errors) {
+  return {
+    ok: errors.length === 0,
+    added: added.map(publicPass),
+    onGate: state.passes.map(publicPass), // everyone on the stay now (drivers + deliveries)
+    errors,
+    community: 'Desert Sky Outpost',
+  };
+}
 
 function submit(drivers) {
   return serial(async () => {
-    const cfg = settings();
-    if (!cfg.gateWrites) throw new DemoError(503, 'The demo is offline right now.');
+    if (!settings().gateWrites) throw new DemoError(503, 'The demo is offline right now.');
     load();
-    if (state.passes.length) throw new DemoError(409, 'This stay already has drivers. Press "Reset demo" first.');
-    if (Date.now() - lastSubmitAt < 15000) throw new DemoError(429, 'One moment — try again in a few seconds.');
-    // The links are public, so cap real gate adds per hour (a booth needs far fewer).
-    const hourAgo = Date.now() - 3600e3;
-    recentSubmits = recentSubmits.filter((t) => t > hourAgo);
-    if (recentSubmits.length >= MAX_SUBMITS_PER_HOUR) throw new DemoError(429, 'The demo has reached its hourly limit. Try again later.');
-    recentSubmits.push(Date.now());
-    lastSubmitAt = Date.now();
-    const clean = validateDrivers(drivers);
+    // Guests can keep adding drivers after the first submit.
+    const current = state.passes.filter((p) => !isDelivery(p));
+    const onGate = new Set(current.map((p) => p.name.toLowerCase()));
+    const clean = validateDrivers(drivers).filter((d) => !onGate.has(`${d.firstName} ${d.lastName}`.toLowerCase()));
+    if (!clean.length) throw new DemoError(400, 'Those drivers are already on the gate.');
+    admitWrite();
     const target = demoTarget();
     const start = new Date();
     const end = new Date(start.getTime() + PASS_MINUTES * 60000);
@@ -172,7 +189,7 @@ function submit(drivers) {
       try {
         const r = await client.addGuest(target, d, { startISO: start.toISOString(), endISO: end.toISOString(), notes: DEMO_TAG });
         if (!r.ok) throw new Error('GoAccess returned status ' + r.status);
-        const p = { id: r.id, name, pin: r.pin || null, startISO: start.toISOString(), endISO: end.toISOString(), addedAt: new Date().toISOString() };
+        const p = { id: r.id, name, kind: 'driver', pin: r.pin || null, startISO: start.toISOString(), endISO: end.toISOString(), addedAt: new Date().toISOString() };
         state.passes.push(p);
         added.push(p);
       } catch (e) {
@@ -181,7 +198,53 @@ function submit(drivers) {
     }
     save();
     logEvent({ type: 'submit', added: added.map((p) => ({ name: p.name, id: p.id, pin: p.pin })), errors });
-    return { ok: errors.length === 0, added: added.map((p) => ({ name: p.name, pin: p.pin, until: p.endISO })), errors, community: 'Desert Sky Outpost' };
+    return onGateResult(added, errors);
+  });
+}
+
+/**
+ * A one-hour pass for a delivery or ride (Uber, DoorDash, Instacart, …). The pass is named so the
+ * guard can tell who it's for: "<Service> delivery for <guest>" or, with a driver's name,
+ * "<Name> (<Service>)". Same on/off switch as drivers.
+ */
+function submitDelivery(service, driverName) {
+  return serial(async () => {
+    if (!settings().gateWrites) throw new DemoError(503, 'The demo is offline right now.');
+    load();
+    const svc = DELIVERY_SERVICES.find((s) => s.toLowerCase() === String(service || '').trim().toLowerCase());
+    if (!svc) throw new DemoError(400, 'Pick a delivery or ride service.');
+    let name;
+    const typed = String(driverName || '').replace(/\s+/g, ' ').trim();
+    if (typed) {
+      const parts = typed.split(' ');
+      const first = cleanName(parts[0], 'name', 0);
+      const rest = parts.slice(1).join(' ');
+      name = `${first}${rest ? ' ' + cleanName(rest, 'name', 0) : ''} (${svc})`;
+    } else {
+      name = `${svc === 'Other' ? 'Delivery' : svc + ' delivery'} for ${liveStayBase().guest}`;
+    }
+    admitWrite();
+    const target = demoTarget();
+    const start = new Date();
+    const end = new Date(start.getTime() + DELIVERY_MINUTES * 60000);
+    const client = await goaccess();
+    const [firstName, ...lastParts] = name.split(' ');
+    const errors = [];
+    const added = [];
+    try {
+      const r = await client.addGuest(target, { firstName, lastName: lastParts.join(' ') },
+        { startISO: start.toISOString(), endISO: end.toISOString(), notes: `${DEMO_TAG} · ${svc} (1 hour)` });
+      if (!r.ok) throw new Error('GoAccess returned status ' + r.status);
+      const p = { id: r.id, name, kind: 'delivery', service: svc, pin: r.pin || null, startISO: start.toISOString(), endISO: end.toISOString(), addedAt: new Date().toISOString() };
+      state.passes.push(p);
+      added.push(p);
+    } catch (e) {
+      errors.push({ name, error: e.message });
+    }
+    save();
+    logEvent({ type: 'delivery', added: added.map((p) => ({ name: p.name, id: p.id, pin: p.pin })), errors });
+    if (!added.length) throw new DemoError(502, errors[0] ? errors[0].error : 'The gate did not accept the pass.');
+    return onGateResult(added, errors);
   });
 }
 
@@ -214,4 +277,4 @@ function reset() {
   });
 }
 
-module.exports = { publicState, submit, reset, validateDrivers, DemoError, DEMO_TAG, settings };
+module.exports = { publicState, submit, submitDelivery, reset, validateDrivers, DemoError, DEMO_TAG, settings };

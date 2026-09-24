@@ -117,6 +117,13 @@ const guestLink = ()=>location.origin+'/demo/guest';
 
 let S = null, openId = null, prevLive = null;
 
+function onGateLabel(s){
+  const list = s.passes || s.drivers.map(n=>({name:n,kind:'driver'}));
+  const nd = list.filter(p=>p.kind!=='delivery').length, nv = list.length - nd;
+  const parts = []; if(nd) parts.push(nd+' driver'+(nd===1?'':'s')); if(nv) parts.push(nv+' deliver'+(nv===1?'y':'ies'));
+  return parts.join(' · ')+' on the gate';
+}
+
 function render(){
   const g = $('#grid'); g.textContent=''; g.style.setProperty('--days', S.days.length);
   g.appendChild(el('div','hd',''));
@@ -138,7 +145,7 @@ function render(){
       const btn = el('button','stay '+s.status+(s.live?' live':'')); btn.type='button';
       btn.style.gridColumn = `${a+1} / ${b+2}`; btn.style.gridRow='1';
       btn.appendChild(el('span','g',s.guest));
-      btn.appendChild(el('span','s', s.status==='added' ? (s.drivers.length+' driver'+(s.drivers.length===1?'':'s')+' on the gate') : 'Waiting for driver names'));
+      btn.appendChild(el('span','s', s.status==='added' ? onGateLabel(s) : 'Waiting for driver names'));
       btn.onclick = ()=>openPanel(s.id);
       if(s.live && prevLive==='awaiting' && s.status==='added') btn.classList.add('flash');
       lane.appendChild(btn);
@@ -161,11 +168,11 @@ function fillPanel(){
   p.appendChild(el('span','chip '+s.status, s.status==='added'?'Drivers on the gate':"Guest hasn't added drivers yet"));
   if(s.status==='added'){
     const ul = el('ul','drivers');
-    if(s.live && s.passes) s.passes.forEach(x=>{ const li=el('li'); li.appendChild(el('span',null,x.name));
+    if(s.live && s.passes) s.passes.forEach(x=>{ const li=el('li'); li.appendChild(el('span',null,x.name+(x.kind==='delivery'?' · delivery, 1 hr':'')));
       li.appendChild(el('span','pin', (x.pin?'PIN '+x.pin+' · ':'')+(x.expired?'expired':'until '+time(x.until)))); ul.appendChild(li); });
     else s.drivers.forEach(n=>ul.appendChild(el('li',null,n)));
     p.appendChild(ul);
-    if(s.live) p.appendChild(el('p','note','Added to the real Desert Sky Outpost gate (GoAccess), tagged "Gate Pilot demo". Passes last '+S.passMinutes/60+' hours.'));
+    if(s.live) p.appendChild(el('p','note','Added to the real Desert Sky Outpost gate (GoAccess), tagged "Gate Pilot demo". Driver passes last '+S.passMinutes/60+' hours; deliveries '+(S.deliveryMinutes||60)/60+' hour.'));
   } else {
     p.appendChild(el('p','note','They get this link in their pre-arrival message:'));
     p.appendChild(el('div','linkbox',guestLink()));
