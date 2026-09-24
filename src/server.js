@@ -5,7 +5,11 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cron = require('node-cron');
-const { run, processReservation, makeGateManager } = require('./orchestrator');
+const crypto = require('crypto');
+const { processReservation, makeGateManager } = require('./orchestrator');
+const automation = require('./automation');
+const notify = require('./notify');
+const apReport = require('./apReport');
 const { parseGateNames } = require('./parseNotes');
 const propertyMap = require('./propertyMap');
 const store = require('./store');
@@ -428,6 +432,21 @@ app.get('/api/status', checkToken, (_req, res) => {
     gateCacheTtlMs: gateCache.TTL_MS,
     openFailures: failures.filter((f) => !f.resolvedAt).length,
     failures,
+    automation: (() => {
+      const s = automation.settings();
+      return {
+        autoAdd: s.autoAdd,
+        dryRun: s.dryRun,
+        writesPossible: s.autoAdd && !s.dryRun && automation.modes().some((m) => m.mode === 'live'),
+        sweepSchedule: process.env.SWEEP_CRON || '*/15 * * * *',
+        daysAhead: s.daysAhead,
+        maxAddsPerRun: s.maxAddsPerRun,
+        maxAttempts: s.maxAttempts,
+        modes: automation.modes(),
+        emailAlerts: notify.configured(),
+        reportUrl: apReport.reportUrl() || null,
+      };
+    })(),
   });
 });
 
@@ -536,15 +555,42 @@ app.post('/api/process', checkToken, async (req, res) => {
   }
 });
 
-// --- Manual full run (all arrivals) ---
+// --- Manual sweep (same controls as the scheduled one) ---
 app.post('/run', checkToken, async (_req, res) => {
   try {
-    const result = await run();
-    res.json({ ok: true, result });
+    const { summary } = await automation.runSweep({ trigger: 'manual' });
+    res.json({ ok: true, result: summary });
   } catch (e) {
-    store.recordRun({ startedAt: new Date().toISOString(), mode: DRY_RUN ? 'dry-run' : 'live', error: e.message, communities: [] });
+    recordSweepError('manual', e);
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+function recordSweepError(trigger, e) {
+  console.error(`[sweep] ${trigger} error`, e);
+  store.recordRun({ kind: 'sweep', trigger, startedAt: new Date().toISOString(), mode: DRY_RUN ? 'dry-run' : 'live', error: e.message, communities: [] });
+}
+
+// --- ArrivalPilot → gate-sync: a guest submitted or changed driver names ---
+// POST { event: 'gate.drivers_submitted', reservation: <feed row> } with Bearer GATE_SYNC_TOKEN.
+// The body is only a hint: the sweep re-reads the stay from the feed. Answers 202 right away.
+const _hookSeen = new Map(); // rid -> last accepted ms (throttle repeats)
+const HOOK_THROTTLE_MS = 30 * 1000;
+function bearerMatches(req, expected) {
+  const h = String(req.get('authorization') || '');
+  const got = h.startsWith('Bearer ') ? h.slice(7) : '';
+  return typeof expected === 'string' && expected.length >= 32 && got.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
+app.post('/api/hooks/gate-submitted', (req, res) => {
+  if (!bearerMatches(req, process.env.GATE_SYNC_TOKEN)) return res.status(401).json({ error: 'unauthorized' });
+  const rid = String((req.body && req.body.reservation && req.body.reservation.reservationId) || '');
+  if (!rid || rid.length > 100) return res.status(400).json({ error: 'reservation.reservationId required' });
+  const last = _hookSeen.get(rid) || 0;
+  if (Date.now() - last < HOOK_THROTTLE_MS) return res.status(202).json({ accepted: true, throttled: true });
+  _hookSeen.set(rid, Date.now());
+  res.status(202).json({ accepted: true });
+  automation.runSweep({ trigger: 'notify', reservationId: rid }).catch((e) => recordSweepError('notify', e));
 });
 
 function tomorrowISO() {
@@ -555,16 +601,14 @@ function tomorrowISO() {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// Daily cron. Default 16:00 UTC (~8–9am Pacific). Override with CRON_SCHEDULE.
-const schedule = process.env.CRON_SCHEDULE || '0 16 * * *';
+// Backstop sweep, every 15 minutes by default (replaces the old tomorrow-only daily run).
+// Override with SWEEP_CRON. Writes only under AUTO_ADD=true + DRY_RUN=false + property mode live.
+const schedule = process.env.SWEEP_CRON || '*/15 * * * *';
 cron.schedule(schedule, () => {
-  console.log('[gate-sync] cron firing');
-  run().catch((e) => {
-    console.error('[gate-sync] cron error', e);
-    store.recordRun({ startedAt: new Date().toISOString(), mode: DRY_RUN ? 'dry-run' : 'live', error: e.message, communities: [] });
-  });
+  automation.runSweep({ trigger: 'cron' }).catch((e) => recordSweepError('cron', e));
 });
 
 app.listen(PORT, () => {
-  console.log(`[gate-sync] listening on ${PORT}; cron "${schedule}"`);
+  const s = automation.settings();
+  console.log(`[gate-sync] listening on ${PORT}; sweep "${schedule}"; AUTO_ADD=${s.autoAdd} DRY_RUN=${s.dryRun}; modes ${automation.modes().map((m) => m.property.split(' —')[0] + '=' + m.mode).join(', ')}`);
 });

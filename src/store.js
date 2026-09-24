@@ -122,6 +122,12 @@ const openFailuresFor = safe((reservationId) => {
   return db.failures.filter((f) => f.reservationId === reservationId && !f.resolvedAt);
 }, []);
 
+/** Failed attempts for one name on one gate since it last succeeded (drives the retry cap). */
+const failedAttempts = safe((reservationId, gateLabel, nameKey) => {
+  load();
+  return db.failures.filter((f) => !f.resolvedAt && f.reservationId === reservationId && f.gateLabel === gateLabel && f.nameKey === nameKey).length;
+}, 0);
+
 const recentFailures = safe((limit = 50) => {
   load();
   return db.failures.slice(0, limit);
@@ -137,6 +143,7 @@ module.exports = {
   recordRun,
   addedFor,
   openFailuresFor,
+  failedAttempts,
   recentFailures,
   runs,
 };

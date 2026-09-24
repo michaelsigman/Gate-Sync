@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const { ProptiaClient } = require('./proptiaClient');
 const { GoAccessClient } = require('./goAccessClient');
-const { makeSource, sourceName, gateNamesFor } = require('./reservations');
+const { gateNamesFor } = require('./reservations');
 const { eligibility, NotEligibleError } = require('./gatePolicy');
 const propertyMap = require('./propertyMap');
 const store = require('./store');
@@ -206,120 +206,6 @@ function recordOutcome(slot, target, ok, reason) {
   }
 }
 
-async function run({ logger = console } = {}) {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  logger.info(
-    `[gate-sync] ${DRY_RUN ? 'DRY-RUN' : 'LIVE'} — arrivals on ${fmtYYYYMMDD(tomorrow)}`
-  );
-
-  const reservations = await makeSource().getReservationsArriving(fmtYYYYMMDD(tomorrow), { logger });
-  logger.info(`[gate-sync] ${reservations.length} reservation(s) arriving tomorrow (source: ${sourceName()})`);
-
-  const actionable = reservations.filter((r) => propertyMap[r.propertyUid]);
-  if (actionable.length === 0) {
-    logger.info('[gate-sync] none map to a known gate property — nothing to do');
-    const at = new Date().toISOString();
-    store.recordRun({ startedAt: at, finishedAt: at, mode: DRY_RUN ? 'dry-run' : 'live', arrivalDate: fmtYYYYMMDD(tomorrow), processed: 0, communities: [] });
-    return { processed: 0, summary: [] };
-  }
-
-  const gates = makeGateManager(logger);
-  const summary = [];
-  const startedAt = new Date().toISOString();
-  const communities = {}; // community -> counts, for /api/status
-  const tally = (prop, target, field) => {
-    const name = communityOf(prop, target);
-    const c = (communities[name] = communities[name] || { community: name, added: 0, wouldAdd: 0, alreadyOnGate: 0, failed: 0, awaitingNames: 0, notEligible: 0 });
-    c[field] += 1;
-  };
-
-  for (const res of actionable) {
-    const prop = propertyMap[res.propertyUid];
-    const parsed = gateNamesFor(res);
-    const targets = getGateTargets(prop);
-
-    logger.info(`\n=== ${prop.label || res.propertyUid} | res ${res.reservationId} | ${targets.length} gate(s) ===`);
-
-    const elig = eligibility(res, prop);
-    if (!elig.ok) {
-      logger.info(`  not eligible (${elig.reason}) — skipping`);
-      tally(prop, targets[0], 'notEligible');
-      summary.push({ property: prop.label, added: [], skipped: 'not eligible: ' + elig.reason });
-      continue;
-    }
-
-    if (parsed.names.length === 0) {
-      logger.info('  no gate-name block in notes — skipping');
-      tally(prop, targets[0], 'awaitingNames');
-      summary.push({ property: prop.label, added: [], skipped: 'no names' });
-      continue;
-    }
-
-    const arrival = res.arrivalDate;     // keep as YYYY-MM-DD string
-    const departure = res.departureDate; // keep as YYYY-MM-DD string
-
-    for (const target of targets) {
-      logger.info(`  -- [${target.gate}] ${target.label} --`);
-      let client = null;
-      let existing = new Set();
-      if (!DRY_RUN) {
-        client = await gates.get(target.gate);
-        existing = await existingKeys(client, target.gate, target.config, logger);
-      }
-
-      const added = [];
-      for (const n of parsed.names) {
-        const key = nameKey(n.firstName, n.lastName);
-        const slot = slotInfo(res, prop, target, n, key, 'cron');
-        if (existing.has(key)) {
-          logger.info(`    • ${n.firstName} ${n.lastName} — already on gate, skip`);
-          store.resolveIfOnGate(res.reservationId, target.label, key);
-          tally(prop, target, 'alreadyOnGate');
-          continue;
-        }
-        if (DRY_RUN) {
-          logger.info(
-            `    + WOULD ADD: ${n.firstName} ${n.lastName}  ` +
-              `(${fmtYYYYMMDD(arrival)} → ${fmtYYYYMMDD(departure)})`
-          );
-          added.push(`${n.firstName} ${n.lastName}`);
-          tally(prop, target, 'wouldAdd');
-        } else {
-          try {
-            const r = await addOne(client, target.gate, target.config, n, arrival, departure);
-            const pin = r.pin ? ` pin=${r.pin}` : '';
-            logger.info(
-              `    + ADDED: ${n.firstName} ${n.lastName} — ${r.ok ? 'ok' : 'status ' + r.status}${pin}`
-            );
-            if (r.ok) added.push(`${n.firstName} ${n.lastName}${pin}`);
-            recordOutcome(slot, target, r.ok, r.ok ? null : 'gate returned status ' + r.status);
-            tally(prop, target, r.ok ? 'added' : 'failed');
-          } catch (e) {
-            logger.error(`    ! FAILED ${n.firstName} ${n.lastName}: ${e.message}`);
-            recordOutcome(slot, target, false, e.message);
-            tally(prop, target, 'failed');
-          }
-        }
-      }
-      summary.push({ gate: target.gate, property: target.label, added });
-    }
-  }
-
-  logger.info('\n[gate-sync] done. summary:');
-  logger.info(JSON.stringify(summary, null, 2));
-  store.recordRun({
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    mode: DRY_RUN ? 'dry-run' : 'live',
-    arrivalDate: fmtYYYYMMDD(tomorrow),
-    processed: actionable.length,
-    communities: Object.values(communities),
-  });
-  return { processed: actionable.length, summary };
-}
-
 /**
  * Process a single reservation object (used by the UI API). Returns a structured
  * plan/result without logging. `clients` is a map of gate->client (may be empty
@@ -399,7 +285,11 @@ async function processReservation({ reservation, prop, clients = {}, dryRun, nam
 }
 
 module.exports = {
-  run,
+  addOne,
+  recordOutcome,
+  slotInfo,
+  communityOf,
+  bufferedWindow,
   processReservation,
   makeGateManager,
   getGateTargets,
@@ -409,8 +299,8 @@ module.exports = {
 };
 
 if (require.main === module) {
-  run().catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+  // One sweep from the command line (npm run run-once). Same controls as the scheduled sweep.
+  require('./automation').runSweep({ trigger: 'cli' })
+    .then((r) => { console.log(JSON.stringify(r.summary, null, 2)); process.exit(0); })
+    .catch((e) => { console.error(e); process.exit(1); });
 }

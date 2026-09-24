@@ -560,6 +560,13 @@ function renderStatusbar(){
   const st = state.serverStatus;
   if(st && st.communities!=null) parts.push(st.communities+(st.communities===1?' community':' communities')+' connected');
   if(st) parts.push(st.lastSyncAt ? 'Last sync '+ago(Date.parse(st.lastSyncAt)) : 'No sync recorded yet');
+  const au = st && st.automation;
+  if(au){
+    const live = (au.modes||[]).filter(m=>m.mode==='live').length, prev = (au.modes||[]).filter(m=>m.mode==='preview').length;
+    parts.push(!au.autoAdd ? 'Auto-add off'
+      : au.writesPossible ? 'Auto-add live ('+live+' home'+(live===1?'':'s')+')'+(prev?' · '+prev+' in preview':'')
+      : 'Auto-add preview only ('+prev+' home'+(prev===1?'':'s')+')');
+  }
   const checked = st && st.gatesCheckedAt ? Date.parse(st.gatesCheckedAt) : null;
   if(checked) parts.push('Gates checked '+ago(checked));
   const gateErrs = st ? (st.communityResults||[]).flatMap(c=>c.gates).filter(g=>g.error).length : 0;

@@ -1,6 +1,7 @@
 {
   "f0d183fc-cc11-4c0a-ab60-d7632954fd51": {
     "label": "Twin Palms — Dual Nicholson Court Condos (6BR)",
+    "mode": "preview",
     "gates": [
       {
         "gate": "proptia",
@@ -24,6 +25,7 @@
   },
   "3c3fb1fd-c1df-473b-92b7-bfebb0e6fc1a": {
     "label": "Villa Chella — 49288 Sherman Drive",
+    "mode": "preview",
     "gates": [
       {
         "gate": "proptia",
@@ -38,6 +40,7 @@
   },
   "ba9dba92-83db-40a7-9a8e-dc6aa7232b51": {
     "label": "Condo on the Green — 82567 Avenue 48 #33",
+    "mode": "preview",
     "gates": [
       {
         "gate": "proptia",
@@ -52,6 +55,7 @@
   },
   "ec4e291f-e51a-4e39-9e83-b439ecb4f312": {
     "label": "Desert Sky Outpost — 43295 Passagio Lago Way",
+    "mode": "preview",
     "gates": [
       {
         "gate": "goaccess",
