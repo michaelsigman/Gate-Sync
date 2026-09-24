@@ -103,7 +103,7 @@ class GoAccessClient {
    * Add one guest. Dates are the stay window; we send local-midnight-to-
    * local-end in UTC (07:00Z ~ midnight PDT) to match the captured request.
    */
-  async addGuest(prop, guest, { startISO, endISO }) {
+  async addGuest(prop, guest, { startISO, endISO, notes = '' }) {
     const payload = {
       name: `${guest.firstName} ${guest.lastName || ''}`.trim(),
       first_name: '',
@@ -112,7 +112,7 @@ class GoAccessClient {
       key_clearance: false,
       start_date: startISO,
       end_date: endISO,
-      notes: '',
+      notes, // e.g. "Gate Pilot demo" — visible on the pass in the GoAccess portal
       requested_by: '',
       type: 'Guest',
       banned: false,
@@ -139,7 +139,28 @@ class GoAccessClient {
     }
 
     const data = res.data?.data?.data || res.data?.data || res.data || {};
-    return { ok: res.status === 201 || res.status === 200, status: res.status, pin: data.pin };
+    return { ok: res.status === 201 || res.status === 200, status: res.status, pin: data.pin, id: data.id || null };
+  }
+
+  /**
+   * Remove a visitor the way the GoAccess portal's own Delete button does: it archives the
+   * visitor (PUT /api/v1/visitors/{id}?return=minimal with { household_id, archive: true }).
+   * Archived visitors drop out of listVisitors. Taken from app.goaccesscontrol.com's resident app
+   * (2026-09-24); proven on a live pass before use.
+   */
+  async archiveVisitor(visitorId, householdId) {
+    const res = await this.http.put(
+      `${BACKEND}/api/v1/visitors/${encodeURIComponent(visitorId)}?return=minimal`,
+      { household_id: householdId, archive: true },
+      { headers: this._auth(), validateStatus: () => true }
+    );
+    if (res.status >= 400) {
+      const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      const err = new Error(`GoAccess archive failed ${res.status}: ${body ? body.slice(0, 300) : '(no body)'}`);
+      err.status = res.status;
+      throw err;
+    }
+    return { ok: true, status: res.status };
   }
 }
 

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Gate registration — Desert Sky Outpost</title>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --brand:#355E3B; --brand-2:#2A4B2F; --brand-soft:#EEF4EF; --ink:#16211B; --dim:#4B5B51; --faint:#86948B; --line:#D9E0D8;
+    --ok:#1FA463; --ok-ink:#157A48; --red:#B8321E; color-scheme:light; }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0}
+  body{background:#E9EEE9;color:var(--ink);font:16px/1.5 'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;justify-content:center}
+  .phone{width:100%;max-width:430px;min-height:100vh;background:#fff;display:flex;flex-direction:column}
+  @media (min-width:600px){ body{padding:32px 16px} .phone{min-height:auto;border-radius:32px;overflow:hidden;box-shadow:0 30px 80px -30px rgba(22,33,27,.45);border:10px solid #111} }
+  header{background:var(--brand);color:#fff;padding:calc(20px + env(safe-area-inset-top,0px)) 22px 22px}
+  header .eyebrow{font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.8;font-weight:600}
+  header h1{font:700 24px/1.2 'Sora',sans-serif;margin:6px 0 4px}
+  header .stay{font-size:14px;opacity:.9}
+  .body{padding:20px 22px 28px;flex:1;display:flex;flex-direction:column;gap:14px}
+  .intro{color:var(--dim);font-size:15px;margin:0}
+  .driver{border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .driver .top{display:flex;justify-content:space-between;align-items:center;font:600 14px 'Sora',sans-serif;color:var(--brand)}
+  .driver .rm{background:none;border:0;color:var(--faint);font-size:14px;cursor:pointer;padding:4px}
+  label{font-size:13px;color:var(--dim);font-weight:600;display:flex;flex-direction:column;gap:4px}
+  input{font:16px 'Inter',sans-serif;padding:12px;border:1px solid var(--line);border-radius:10px;color:var(--ink);background:#fff}
+  input:focus{outline:2px solid var(--brand);border-color:var(--brand)}
+  .add{background:none;border:1.5px dashed var(--line);border-radius:12px;padding:12px;font:600 15px 'Inter';color:var(--brand);cursor:pointer}
+  .add:disabled{opacity:.45;cursor:default}
+  .submit{background:var(--brand);color:#fff;border:0;border-radius:14px;padding:16px;font:700 17px 'Sora',sans-serif;cursor:pointer;margin-top:4px}
+  .submit:disabled{opacity:.6}
+  .err{color:var(--red);font-size:14px;margin:0}
+  .fine{color:var(--faint);font-size:12.5px;margin:0}
+  .done{text-align:center;padding:26px 8px}
+  .done .check{width:64px;height:64px;border-radius:99px;background:var(--brand-soft);color:var(--brand);display:grid;place-items:center;font-size:32px;margin:0 auto 12px}
+  .done h2{font:700 22px 'Sora',sans-serif;margin:0 0 6px}
+  .done p{color:var(--dim);margin:0 0 16px}
+  .passes{list-style:none;padding:0;margin:0;text-align:left}
+  .passes li{display:flex;justify-content:space-between;padding:12px 4px;border-top:1px solid var(--line)}
+  .passes .pin{font:600 14px ui-monospace,monospace;color:var(--ok-ink)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <div class="eyebrow">Vehicle & gate registration</div>
+    <h1>Desert Sky Outpost</h1>
+    <div class="stay" id="stayDates">Your stay</div>
+  </header>
+  <div class="body" id="formView">
+    <p class="intro">The community gate needs every driver's name before you arrive. Add each person who'll be driving in.</p>
+    <div id="drivers" style="display:flex;flex-direction:column;gap:12px"></div>
+    <button class="add" id="addBtn" type="button">+ Add driver</button>
+    <p class="err" id="err" role="alert" hidden></p>
+    <button class="submit" id="submitBtn" type="button">Submit to gate</button>
+    <p class="fine">Demo: names go on the real gate for 2 hours, tagged "Gate Pilot demo".</p>
+  </div>
+  <div class="body" id="doneView" hidden>
+    <div class="done">
+      <div class="check">✓</div>
+      <h2 id="doneTitle">You're on the gate list</h2>
+      <p id="doneSub"></p>
+      <ul class="passes" id="passes"></ul>
+    </div>
+  </div>
+</div>
+<script>
+const KEY = (()=>{ let k=null; try{ const u=new URL(location.href); k=u.searchParams.get('k');
+  if(k){ sessionStorage.setItem('gp-demo-key',k); u.searchParams.delete('k'); history.replaceState(null,'',u.pathname+u.search); }
+  else k=sessionStorage.getItem('gp-demo-key'); }catch(e){} return k; })();
+const $=(s)=>document.querySelector(s);
+const el=(t,c,x)=>{const e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;};
+let MAX=3, rows=[];
+const api=(p,o={})=>fetch(p,{...o,headers:{'Content-Type':'application/json','x-demo-key':KEY||''}}).then(async r=>{const b=await r.json().catch(()=>({})); if(!r.ok) throw new Error(b.error||('HTTP '+r.status)); return b;});
+const day=(iso)=>{const [y,m,d]=iso.split('-').map(Number); return new Date(y,m-1,d,12).toLocaleDateString(undefined,{month:'short',day:'numeric'});};
+const time=(iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+
+function draw(){
+  const box=$('#drivers'); box.textContent='';
+  rows.forEach((r,i)=>{
+    const d=el('div','driver'); const top=el('div','top'); top.appendChild(el('span',null,'Driver '+(i+1)));
+    if(rows.length>1){ const rm=el('button','rm','Remove'); rm.type='button'; rm.onclick=()=>{ rows.splice(i,1); draw(); }; top.appendChild(rm); }
+    d.appendChild(top);
+    for(const [k,lab] of [['firstName','First name'],['lastName','Last name']]){
+      const l=el('label',null,lab); const inp=el('input'); inp.value=r[k]; inp.maxLength=30; inp.autocomplete='off'; inp.id=`d${i}-${k}`;
+      inp.oninput=()=>{ r[k]=inp.value; }; l.appendChild(inp); d.appendChild(l);
+    }
+    box.appendChild(d);
+  });
+  $('#addBtn').disabled = rows.length>=MAX;
+  $('#addBtn').textContent = rows.length>=MAX ? 'Up to '+MAX+' drivers' : '+ Add driver';
+}
+$('#addBtn').onclick=()=>{ if(rows.length<MAX){ rows.push({firstName:'',lastName:''}); draw(); document.getElementById(`d${rows.length-1}-firstName`).focus(); } };
+$('#submitBtn').onclick=async()=>{
+  const e=$('#err'); e.hidden=true; const b=$('#submitBtn'); b.disabled=true; b.textContent='Adding to the gate…';
+  try{
+    const r=await api('/api/demo/submit',{method:'POST',body:JSON.stringify({drivers:rows})});
+    if(!r.added.length) throw new Error((r.errors[0]&&r.errors[0].error)||'Nothing was added.');
+    $('#formView').hidden=true; $('#doneView').hidden=false;
+    $('#doneTitle').textContent="You're on the gate list for "+r.community;
+    $('#doneSub').textContent = 'Valid until '+time(r.added[0].until)+' today.' + (r.errors.length ? ' Not added: '+r.errors.map(x=>x.name).join(', ')+'.' : '');
+    const ul=$('#passes'); r.added.forEach(p=>{ const li=el('li'); li.appendChild(el('span',null,p.name)); li.appendChild(el('span','pin', p.pin ? 'Gate PIN '+p.pin : 'Added')); ul.appendChild(li); });
+  }catch(err){ e.textContent=err.message; e.hidden=false; }
+  finally{ b.disabled=false; b.textContent='Submit to gate'; }
+};
+api('/api/demo/state').then(s=>{
+  MAX=s.maxDrivers; const live=s.stays.find(x=>x.live);
+  if(live) $('#stayDates').textContent=live.guest+' · '+day(live.checkIn)+' – '+day(live.checkOut);
+  rows=s.prefill.map(p=>({...p})); draw();
+}).catch(err=>{ rows=[{firstName:'',lastName:''}]; draw(); $('#err').textContent=/forbidden/.test(err.message)?'Open this form from the demo link.':err.message; $('#err').hidden=false; });
+</script>
+</body>
+</html>

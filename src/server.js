@@ -8,6 +8,7 @@ const cron = require('node-cron');
 const crypto = require('crypto');
 const { processReservation, makeGateManager } = require('./orchestrator');
 const automation = require('./automation');
+const demo = require('./demo');
 const notify = require('./notify');
 const apReport = require('./apReport');
 const { parseGateNames } = require('./parseNotes');
@@ -565,6 +566,26 @@ app.post('/api/process', checkToken, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// --- VRMA booth demo (src/demo.js). Own token (DEMO_TOKEN: demo actions only, safe to show on the
+// booth screen's guest link), own write switch (DEMO_GATE_WRITES). Fail-closed without DEMO_TOKEN.
+function checkDemoKey(req, res, next) {
+  const need = process.env.DEMO_TOKEN;
+  if (!need) return res.status(503).json({ error: 'DEMO_TOKEN is not configured on the server' });
+  const got = String(req.get('x-demo-key') || req.query.k || '');
+  if (got.length === need.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(need))) return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+const demoFail = (res, e) => res.status(e instanceof demo.DemoError ? e.status : 500).json({ error: e.message });
+app.get('/demo', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'demo.html')));
+app.get('/demo/guest', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'demo-guest.html')));
+app.get('/api/demo/state', checkDemoKey, (_req, res) => res.json(demo.publicState()));
+app.post('/api/demo/submit', checkDemoKey, async (req, res) => {
+  try { res.json(await demo.submit(req.body && req.body.drivers)); } catch (e) { demoFail(res, e); }
+});
+app.post('/api/demo/reset', checkDemoKey, async (_req, res) => {
+  try { res.json(await demo.reset()); } catch (e) { demoFail(res, e); }
 });
 
 // --- Manual sweep (same controls as the scheduled one) ---

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Gate Pilot — Live demo</title>
+<link rel="icon" type="image/png" href="/assets/gate-pilot-logo.png" />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as the dashboard (public/index.html). */
+  :root{
+    --brand:#355E3B; --brand-hover:#40714A; --on-brand:#fff; --brand-ink:#8CC49A;
+    --ok:#1FA463; --ok-ink:#2BC077; --ok-soft:rgba(31,164,99,.16);
+    --red:#E0533D; --red-ink:#FF9F8E; --red-soft:rgba(224,83,61,.16);
+    --bg:#0A1428; --bg-2:#0F1C33; --panel:#13233D; --panel-2:#19304F; --line:#23375A; --line-soft:#1B2C49;
+    --ink:#EAF0F8; --ink-dim:#9DB0CA; --ink-faint:#64789A;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.5 'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+  .nav{display:flex;align-items:center;gap:14px;padding:12px 28px;border-top:4px solid var(--brand);border-bottom:1px solid var(--line-soft);background:rgba(10,20,40,.92)}
+  .nav img{height:46px}
+  .nav h1{font:800 22px/1 'Sora',sans-serif;margin:0;letter-spacing:-.02em}
+  .nav .sub{font-size:11px;color:var(--ink-faint);letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-top:4px}
+  .pill{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 11px;border-radius:99px;background:var(--brand);color:#fff}
+  .spacer{flex:1}
+  .btn{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:9px 16px;font:600 14px 'Inter',sans-serif;cursor:pointer}
+  .btn:hover{border-color:var(--brand-ink)}
+  .btn.primary{background:var(--brand);border-color:transparent;color:#fff}
+  .btn:disabled{opacity:.5;cursor:default}
+  main{max-width:1680px;margin:0 auto;padding:24px 28px 48px}
+  .lede{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .lede h2{font:700 26px 'Sora',sans-serif;margin:0;letter-spacing:-.02em}
+  .lede p{margin:0;color:var(--ink-dim)}
+  .legend{display:flex;gap:16px;font-size:13px;color:var(--ink-dim);margin:0 0 12px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  .legend .g{background:var(--ok)} .legend .r{background:var(--red)}
+
+  /* Stacked calendar: one row per home, one column per day. */
+  .cal{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow-x:auto}
+  .grid{display:grid;grid-template-columns:200px repeat(var(--days),minmax(92px,1fr));min-width:900px}
+  .hd{padding:10px 8px;text-align:center;font-size:12px;color:var(--ink-faint);font-weight:600;letter-spacing:.04em;border-bottom:1px solid var(--line-soft)}
+  .hd b{display:block;font:700 16px 'Sora',sans-serif;color:var(--ink-dim)}
+  .hd.today{color:var(--brand-ink)} .hd.today b{color:var(--ink)}
+  .home{padding:0 16px;display:flex;align-items:center;font:600 15px 'Sora',sans-serif;border-top:1px solid var(--line-soft);min-height:84px}
+  .home small{display:block;font:500 12px 'Inter';color:var(--ink-faint)}
+  .lane{grid-column:2 / -1;display:grid;grid-template-columns:repeat(var(--days),minmax(92px,1fr));border-top:1px solid var(--line-soft);position:relative;min-height:84px;align-items:center}
+  .lane .todaycol{position:absolute;top:0;bottom:0;background:rgba(140,196,154,.07);border-left:2px solid rgba(140,196,154,.5)}
+  .stay{margin:0 4px;height:52px;border-radius:10px;padding:6px 12px;cursor:pointer;border:0;text-align:left;color:var(--ink);font:inherit;
+    display:flex;flex-direction:column;justify-content:center;overflow:hidden;position:relative;z-index:1}
+  .stay .g{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stay .s{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stay.added{background:var(--ok-soft);box-shadow:inset 4px 0 0 var(--ok)} .stay.added .s{color:var(--ok-ink)}
+  .stay.awaiting{background:var(--red-soft);box-shadow:inset 4px 0 0 var(--red)} .stay.awaiting .s{color:var(--red-ink)}
+  .stay.live{outline:2px dashed rgba(234,240,248,.35);outline-offset:2px}
+  .stay:focus-visible{outline:3px solid var(--brand-ink)}
+  .stay.flash{animation:flash 1.2s ease-out}
+  @keyframes flash{0%{box-shadow:inset 4px 0 0 var(--ok),0 0 0 0 rgba(43,192,119,.7)}100%{box-shadow:inset 4px 0 0 var(--ok),0 0 0 18px rgba(43,192,119,0)}}
+
+  /* Side panel */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9}
+  .panel{position:fixed;top:0;right:0;bottom:0;width:min(460px,100%);background:var(--panel);border-left:1px solid var(--line);z-index:10;padding:24px;overflow:auto}
+  .panel h3{font:700 20px 'Sora',sans-serif;margin:0 0 4px}
+  .panel .meta{color:var(--ink-dim);font-size:14px;margin-bottom:18px}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:5px 12px;border-radius:99px}
+  .chip::before{content:'';width:8px;height:8px;border-radius:99px;background:currentColor}
+  .chip.added{background:var(--ok-soft);color:var(--ok-ink)} .chip.awaiting{background:var(--red-soft);color:var(--red-ink)}
+  .drivers{list-style:none;padding:0;margin:16px 0}
+  .drivers li{display:flex;justify-content:space-between;gap:10px;padding:11px 0;border-top:1px solid var(--line-soft);font-size:16px}
+  .drivers .pin{font:600 13px ui-monospace,monospace;background:var(--bg-2);padding:3px 8px;border-radius:6px;color:var(--ink-dim)}
+  .note{color:var(--ink-dim);font-size:14px}
+  .linkbox{margin:14px 0;padding:12px;border-radius:10px;background:var(--bg-2);border:1px solid var(--line);word-break:break-all;font:13px ui-monospace,monospace;color:var(--ink-dim)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .banner{margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--red-soft);color:var(--red-ink);font-size:14px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line);padding:12px 20px;border-radius:99px;opacity:0;transition:.25s;z-index:20;max-width:calc(100% - 32px)}
+  .toast.show{opacity:1}
+  @media (min-width:1600px){ body{font-size:16px} .home{min-height:96px} .lane{min-height:96px} .stay{height:60px} .stay .g{font-size:16px} }
+  @media (max-width:640px){ .nav{padding:12px 16px} .nav .sub{display:none} main{padding:16px} .grid{grid-template-columns:120px repeat(var(--days),minmax(80px,1fr))} .home{padding:0 10px;font-size:13px} }
+  @media (prefers-reduced-motion:reduce){ .stay.flash{animation:none} .toast{transition:none} }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <img src="/assets/gate-pilot-logo.png" alt="Gate Pilot" />
+  <div><h1>Gate Pilot</h1><div class="sub">Automated Community Access</div></div>
+  <span class="pill">Live demo</span>
+  <span class="spacer"></span>
+  <button class="btn" id="resetBtn">Reset demo</button>
+</nav>
+<main>
+  <div class="lede">
+    <h2>Guest gate access, handled.</h2>
+    <p>Guests add their drivers; Gate Pilot puts them on the community gate.</p>
+  </div>
+  <div class="banner" id="banner" hidden></div>
+  <div class="legend"><span><i class="g"></i>Drivers on the gate</span><span><i class="r"></i>Guest hasn't added drivers yet</span></div>
+  <div class="cal"><div class="grid" id="grid"></div></div>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="panel" id="panel" hidden aria-live="polite"></aside>
+<div class="toast" id="toast"></div>
+
+<script>
+// Demo key: open once as /demo?k=… ; kept for this tab and removed from the address bar.
+const KEY = (()=>{ let k=null; try{ const u=new URL(location.href); k=u.searchParams.get('k');
+  if(k){ sessionStorage.setItem('gp-demo-key',k); u.searchParams.delete('k'); history.replaceState(null,'',u.pathname+u.search); }
+  else k=sessionStorage.getItem('gp-demo-key'); }catch(e){} return k; })();
+const $ = (s)=>document.querySelector(s);
+const el = (t,c,x)=>{const e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;};
+function api(path, opts={}){ return fetch(path,{...opts,headers:{'Content-Type':'application/json','x-demo-key':KEY||'',...(opts.headers||{})}})
+  .then(async r=>{ const b=await r.json().catch(()=>({})); if(!r.ok) throw new Error(b.error||('HTTP '+r.status)); return b; }); }
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),3200); }
+const fmtDay = (iso)=>{ const [y,m,d]=iso.split('-').map(Number); return new Date(y,m-1,d,12); };
+const short = (iso)=>fmtDay(iso).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+const time = (iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+const guestLink = ()=>location.origin+'/demo/guest?k='+encodeURIComponent(KEY||'');
+
+let S = null, openId = null, prevLive = null;
+
+function render(){
+  const g = $('#grid'); g.textContent=''; g.style.setProperty('--days', S.days.length);
+  g.appendChild(el('div','hd',''));
+  S.days.forEach(d=>{ const h=el('div','hd'+(d===S.today?' today':'')); h.appendChild(document.createTextNode(fmtDay(d).toLocaleDateString(undefined,{weekday:'short'})));
+    h.appendChild(el('b',null,String(fmtDay(d).getDate()))); g.appendChild(h); });
+  S.homes.forEach(home=>{
+    const hc = el('div','home'); hc.appendChild(el('div',null,home)); g.appendChild(hc);
+    const lane = el('div','lane'); lane.style.setProperty('--days', S.days.length);
+    const ti = S.days.indexOf(S.today);
+    if(ti>=0){ const tc=el('div','todaycol'); tc.style.left=`calc(${ti} * 100% / ${S.days.length})`; tc.style.width=`calc(100% / ${S.days.length})`; lane.appendChild(tc); }
+    S.stays.filter(s=>s.home===home).forEach(s=>{
+      let a = S.days.indexOf(s.checkIn), b = S.days.indexOf(s.checkOut);
+      if(a<0) a = s.checkIn < S.days[0] ? 0 : -1; if(b<0) b = s.checkOut > S.days[S.days.length-1] ? S.days.length-1 : -1;
+      if(a<0||b<0) return;
+      const btn = el('button','stay '+s.status+(s.live?' live':'')); btn.type='button';
+      btn.style.gridColumn = `${a+1} / ${b+2}`; btn.style.gridRow='1';
+      btn.appendChild(el('span','g',s.guest));
+      btn.appendChild(el('span','s', s.status==='added' ? (s.drivers.length+' driver'+(s.drivers.length===1?'':'s')+' on the gate') : 'Waiting for driver names'));
+      btn.onclick = ()=>openPanel(s.id);
+      if(s.live && prevLive==='awaiting' && s.status==='added') btn.classList.add('flash');
+      lane.appendChild(btn);
+    });
+    g.appendChild(lane);
+  });
+  const live = S.stays.find(s=>s.live); prevLive = live && live.status;
+  if(openId) fillPanel();
+  const b = $('#banner');
+  b.hidden = S.settings.gateWrites; b.textContent = 'Demo gate writes are off on the server (DEMO_GATE_WRITES). The form will not add anyone.';
+}
+
+function openPanel(id){ openId=id; $('#panel').hidden=false; $('#scrim').hidden=false; fillPanel(); }
+function closePanel(){ openId=null; $('#panel').hidden=true; $('#scrim').hidden=true; }
+function fillPanel(){
+  const s = S.stays.find(x=>x.id===openId); const p=$('#panel'); p.textContent=''; if(!s) return closePanel();
+  const close = el('button','btn','Close'); close.style.float='right'; close.onclick=closePanel; p.appendChild(close);
+  p.appendChild(el('h3',null,s.guest));
+  p.appendChild(el('div','meta',s.home+' · '+short(s.checkIn)+' → '+short(s.checkOut)));
+  p.appendChild(el('span','chip '+s.status, s.status==='added'?'Drivers on the gate':"Guest hasn't added drivers yet"));
+  if(s.status==='added'){
+    const ul = el('ul','drivers');
+    if(s.live && s.passes) s.passes.forEach(x=>{ const li=el('li'); li.appendChild(el('span',null,x.name));
+      li.appendChild(el('span','pin', (x.pin?'PIN '+x.pin+' · ':'')+(x.expired?'expired':'until '+time(x.until)))); ul.appendChild(li); });
+    else s.drivers.forEach(n=>ul.appendChild(el('li',null,n)));
+    p.appendChild(ul);
+    if(s.live) p.appendChild(el('p','note','Added to the real Desert Sky Outpost gate (GoAccess), tagged "Gate Pilot demo". Passes last '+S.passMinutes/60+' hours.'));
+  } else {
+    p.appendChild(el('p','note','They get this link in their pre-arrival message:'));
+    p.appendChild(el('div','linkbox',guestLink()));
+    const row = el('div','row');
+    const open = el('button','btn primary','Open guest form'); open.onclick=()=>window.open(guestLink(),'_blank'); row.appendChild(open);
+    const copy = el('button','btn','Copy link'); copy.onclick=()=>navigator.clipboard.writeText(guestLink()).then(()=>toast('Link copied'),()=>toast('Copy failed')); row.appendChild(copy);
+    p.appendChild(row);
+  }
+}
+
+let lastJson = '';
+async function refresh(){
+  try{
+    const next = await api('/api/demo/state');
+    const json = JSON.stringify(next);
+    if(json === lastJson) return; // nothing changed: keep the DOM (no flicker, focus kept)
+    lastJson = json; S = next; render();
+  }
+  catch(e){ $('#banner').hidden=false; $('#banner').textContent = /forbidden|403/.test(e.message) ? 'Open this page with its ?k= demo link.' : 'Could not load the demo: '+e.message; }
+}
+
+$('#resetBtn').onclick = async ()=>{
+  const b=$('#resetBtn'); b.disabled=true; b.textContent='Resetting…';
+  try{
+    const r = await api('/api/demo/reset',{method:'POST'});
+    if(r.removeInPortal && r.removeInPortal.length) toast('Remove in portal: '+r.removeInPortal.map(x=>x.name).join(', '));
+    else toast(r.removed && r.removed.length ? 'Demo reset: removed '+r.removed.length+' pass'+(r.removed.length===1?'':'es')+' from the gate' : 'Demo reset');
+    await refresh();
+  }catch(e){ toast('Reset failed: '+e.message); }
+  finally{ b.disabled=false; b.textContent='Reset demo'; }
+};
+$('#scrim').onclick = closePanel;
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closePanel(); });
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>
