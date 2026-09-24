@@ -104,19 +104,15 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// Demo key: open once as /demo?k=… ; kept for this tab and removed from the address bar.
-const KEY = (()=>{ let k=null; try{ const u=new URL(location.href); k=u.searchParams.get('k');
-  if(k){ sessionStorage.setItem('gp-demo-key',k); u.searchParams.delete('k'); history.replaceState(null,'',u.pathname+u.search); }
-  else k=sessionStorage.getItem('gp-demo-key'); }catch(e){} return k; })();
 const $ = (s)=>document.querySelector(s);
 const el = (t,c,x)=>{const e=document.createElement(t); if(c) e.className=c; if(x!=null) e.textContent=x; return e;};
-function api(path, opts={}){ return fetch(path,{...opts,headers:{'Content-Type':'application/json','x-demo-key':KEY||'',...(opts.headers||{})}})
+function api(path, opts={}){ return fetch(path,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}})
   .then(async r=>{ const b=await r.json().catch(()=>({})); if(!r.ok) throw new Error(b.error||('HTTP '+r.status)); return b; }); }
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),3200); }
 const fmtDay = (iso)=>{ const [y,m,d]=iso.split('-').map(Number); return new Date(y,m-1,d,12); };
 const short = (iso)=>fmtDay(iso).toLocaleDateString(undefined,{month:'short',day:'numeric'});
 const time = (iso)=>new Date(iso).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
-const guestLink = ()=>location.origin+'/demo/guest?k='+encodeURIComponent(KEY||'');
+const guestLink = ()=>location.origin+'/demo/guest';
 
 let S = null, openId = null, prevLive = null;
 
@@ -147,7 +143,7 @@ function render(){
   const live = S.stays.find(s=>s.live); prevLive = live && live.status;
   if(openId) fillPanel();
   const b = $('#banner');
-  b.hidden = S.settings.gateWrites; b.textContent = 'Demo gate writes are off on the server (DEMO_GATE_WRITES). The form will not add anyone.';
+  b.hidden = S.settings.gateWrites; b.textContent = 'The demo is offline: the guest form won’t add anyone to the gate. (Turn on DEMO_GATE_WRITES for show days.)';
 }
 
 function openPanel(id){ openId=id; $('#panel').hidden=false; $('#scrim').hidden=false; fillPanel(); }
@@ -183,7 +179,7 @@ async function refresh(){
     if(json === lastJson) return; // nothing changed: keep the DOM (no flicker, focus kept)
     lastJson = json; S = next; render();
   }
-  catch(e){ $('#banner').hidden=false; $('#banner').textContent = /forbidden|403/.test(e.message) ? 'Open this page with its ?k= demo link.' : 'Could not load the demo: '+e.message; }
+  catch(e){ $('#banner').hidden=false; $('#banner').textContent = 'Could not load the demo: '+e.message; }
 }
 
 $('#resetBtn').onclick = async ()=>{

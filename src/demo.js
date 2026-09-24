@@ -5,8 +5,10 @@
  *   - Invented homes' stays and names only (DEMO_STAYS below) — never reads guest data.
  *   - Exactly ONE stay (the red one) ever writes to a gate, and only to Desert Sky Outpost's GoAccess
  *     household (checked on every write), with a 2-hour pass tagged "Gate Pilot demo" in notes.
- *   - Its own switch (DEMO_GATE_WRITES=true) and its own state file — independent of DRY_RUN,
- *     AUTO_ADD and property modes, and never written to the dashboard's history.
+ *   - Plain public links (no token). Gate writes happen only while DEMO_GATE_WRITES=true (on for show
+ *     days, off after); otherwise the form says the demo is offline. 15 s between submits, 20/hour.
+ *   - Its own state file — independent of DRY_RUN, AUTO_ADD and property modes, and never written to
+ *     the dashboard's history.
  *   - Reset archives the demo passes through GoAccess only when DEMO_REMOVE=api (set after the
  *     supervised removal test). Otherwise it answers "Remove in portal" with the names to delete.
  */
@@ -142,14 +144,21 @@ async function goaccess() {
 let chain = Promise.resolve();
 const serial = (fn) => { const p = chain.then(fn); chain = p.catch(() => {}); return p; };
 let lastSubmitAt = 0;
+let recentSubmits = [];
+const MAX_SUBMITS_PER_HOUR = 20;
 
 function submit(drivers) {
   return serial(async () => {
     const cfg = settings();
-    if (!cfg.gateWrites) throw new DemoError(409, 'Demo gate writes are off (DEMO_GATE_WRITES).');
+    if (!cfg.gateWrites) throw new DemoError(503, 'The demo is offline right now.');
     load();
     if (state.passes.length) throw new DemoError(409, 'This stay already has drivers. Press "Reset demo" first.');
     if (Date.now() - lastSubmitAt < 15000) throw new DemoError(429, 'One moment — try again in a few seconds.');
+    // The links are public, so cap real gate adds per hour (a booth needs far fewer).
+    const hourAgo = Date.now() - 3600e3;
+    recentSubmits = recentSubmits.filter((t) => t > hourAgo);
+    if (recentSubmits.length >= MAX_SUBMITS_PER_HOUR) throw new DemoError(429, 'The demo has reached its hourly limit. Try again later.');
+    recentSubmits.push(Date.now());
     lastSubmitAt = Date.now();
     const clean = validateDrivers(drivers);
     const target = demoTarget();

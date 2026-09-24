@@ -568,23 +568,17 @@ app.post('/api/process', checkToken, async (req, res) => {
   }
 });
 
-// --- VRMA booth demo (src/demo.js). Own token (DEMO_TOKEN: demo actions only, safe to show on the
-// booth screen's guest link), own write switch (DEMO_GATE_WRITES). Fail-closed without DEMO_TOKEN.
-function checkDemoKey(req, res, next) {
-  const need = process.env.DEMO_TOKEN;
-  if (!need) return res.status(503).json({ error: 'DEMO_TOKEN is not configured on the server' });
-  const got = String(req.get('x-demo-key') || req.query.k || '');
-  if (got.length === need.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(need))) return next();
-  return res.status(403).json({ error: 'forbidden' });
-}
+// --- VRMA booth demo (src/demo.js). Plain links, no token: the demo only shows invented data, and
+// it can write to the (one) demo gate only while DEMO_GATE_WRITES=true — on for show days, off after.
+// When off, the form says the demo is offline. Submits are throttled (src/demo.js).
 const demoFail = (res, e) => res.status(e instanceof demo.DemoError ? e.status : 500).json({ error: e.message });
 app.get('/demo', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'demo.html')));
 app.get('/demo/guest', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'demo-guest.html')));
-app.get('/api/demo/state', checkDemoKey, (_req, res) => res.json(demo.publicState()));
-app.post('/api/demo/submit', checkDemoKey, async (req, res) => {
+app.get('/api/demo/state', (_req, res) => res.json(demo.publicState()));
+app.post('/api/demo/submit', async (req, res) => {
   try { res.json(await demo.submit(req.body && req.body.drivers)); } catch (e) { demoFail(res, e); }
 });
-app.post('/api/demo/reset', checkDemoKey, async (_req, res) => {
+app.post('/api/demo/reset', async (_req, res) => {
   try { res.json(await demo.reset()); } catch (e) { demoFail(res, e); }
 });
 
