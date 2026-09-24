@@ -1,8 +1,9 @@
-# BookedUp Gate-Sync
+# BookedUp Gate-Sync (Gate Pilot)
 
-Adds guest **driver names** to security gates automatically, pulled from
-**Hostfully** reservation notes. Runs daily, processing reservations that
-**arrive tomorrow**. Supports two gate systems:
+Adds guest **driver names** to community security gates. Guests submit names in
+ArrivalPilot's "Vehicle & gate registration" step. ArrivalPilot syncs the Hospitable
+reservations, and gate-sync reads them through ArrivalPilot's read-only `gateSyncFeed`.
+Live at **https://gate-sync.onrender.com** (Render). Supports two gate systems:
 
 | Gate | Properties | Mechanism | Auth |
 |------|-----------|-----------|------|
@@ -10,7 +11,8 @@ Adds guest **driver names** to security gates automatically, pulled from
 | **GoAccessControl** | 1 | REST API (`POST /api/v1/visitors`) | Supabase bearer token |
 
 The right adapter is chosen per-property by the `gate` field in
-`src/propertyMap.js`. Both share one notes parser and one Hostfully fetch.
+`gate_property_map.json`. Hostfully notes remain only as a legacy fallback
+(`RESERVATION_SOURCE=hostfully`). Hostfully stays are never eligible for automation.
 
 GoAccess is a clean API and returns a **PIN** per guest (logged in the run
 output) — you could later relay these to guests. Proptia is unofficial session
@@ -18,24 +20,30 @@ automation; treat it as more fragile.
 
 ---
 
-## What it does, each run
+## What it does, each sweep
 
-1. Asks Hostfully for reservations arriving **tomorrow**.
-2. Keeps only properties in `src/propertyMap.js` (others skipped).
-3. Parses each reservation's notes for the
-   `Drivers Names to be added to security gate:` block. The block is often
-   **appended multiple times** as the guest edits check-in — we take the
-   **latest** list (longest as fallback) and **dedupe**.
-4. Routes each guest to the property's gate adapter and adds a guest pass for
-   the stay dates — or, in **dry-run**, logs what it *would* add.
-5. In live mode, checks who's **already on the gate** first to avoid duplicates.
+A sweep runs every 15 minutes, and also when ArrivalPilot reports a guest submission.
+
+1. Reads stays that overlap today → +14 days (Pacific time) from `gateSyncFeed`.
+   The feed only contains Gate Pilot homes. Guests already in-house are included.
+2. Skips anything not eligible (`src/gatePolicy.js`). An eligible stay's property has a
+   fully configured gate in `gate_property_map.json`, and the stay came from the feed.
+3. Uses the guest-submitted drivers. Legacy Hostfully notes blocks are still parsed.
+4. Checks each property's `mode` (`off` | `preview` | `live`):
+   - In preview it only logs `WOULD ADD …`.
+   - It writes only when `AUTO_ADD=true`, `DRY_RUN=false` and the mode is `live`.
+5. Before a live write it re-reads the gate. Passes run from the day before check-in
+   through checkout + 1. Limits: 25 writes per run, 3 attempts per name.
+6. Reports results and the run record to ArrivalPilot (`gateSyncReport`). Emails
+   failures through SendGrid when configured.
 
 ---
 
 ## Safety: dry-run is the default
 
-`DRY_RUN` defaults to `true`. Nothing is written until you set `DRY_RUN=false`.
-Run in dry-run for a few days, confirm the output, then flip it.
+Any value except exactly `DRY_RUN=false` means preview. That applies to the sweep **and**
+the dashboard's "Add to gate". Automatic writes also need `AUTO_ADD=true` and a property
+with `mode: "live"`. A missing setting always means "don't write".
 
 ---
 
@@ -79,8 +87,11 @@ Copy `.env.example` to `.env`:
 - `GOACCESS_USERNAME` / `GOACCESS_PASSWORD` — the GoAccess login.
 - `GOACCESS_ANON_KEY` — Supabase publishable key (the `apikey` header on the
   login request; safe to ship).
-- `HOSTFULLY_API_KEY` / `HOSTFULLY_AGENCY_UID` — reuse your webhook receiver's.
-- `CRON_SCHEDULE` — default `0 16 * * *` (16:00 UTC ≈ 8–9am Pacific).
+- `AP_FEED_URL` / `GATE_SYNC_TOKEN`: the ArrivalPilot feed and the shared bearer token.
+- `UI_TOKEN`: required. Without it the API refuses every call (`ALLOW_OPEN_UI=true` for local dev only).
+- `AUTO_ADD`, `SWEEP_CRON` (default every 15 min), `SWEEP_MAX_ADDS`, `MAX_ADD_ATTEMPTS`.
+- `SENDGRID_API_KEY` / `ALERT_EMAIL_FROM`: failure email (optional).
+- See `.env.example` for the full list.
 
 ---
 
@@ -89,18 +100,18 @@ Copy `.env.example` to `.env`:
 ```bash
 npm install
 npm run test-parser   # sanity-check the notes parser
-npm run run-once      # one full pass (respects DRY_RUN)
-npm start             # server + daily cron + POST /run
+npm run run-once      # one sweep (same controls as the scheduled one)
+npm start             # server + 15-min sweep + POST /run
 ```
 
-Manual trigger: `POST /run?token=YOUR_RUN_TOKEN`.
+Manual sweep: `POST /run` with header `x-ui-token: <UI_TOKEN>`.
 
 ---
 
 ## Deploy on Render
 
-New Web Service, Node, start command `npm start`. Set env vars (keep
-`DRY_RUN=true` initially). Built-in cron handles the daily run.
+The live service is **https://gate-sync.onrender.com**, and it auto-deploys from `main`.
+See DEPLOY.md for the env vars. The sweep runs inside the service, so there's no separate cron job.
 
 ---
 

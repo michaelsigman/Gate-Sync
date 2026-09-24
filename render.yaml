@@ -5,7 +5,7 @@
 
 services:
   - type: web
-    name: bookedup-gate-sync
+    name: bookedup-gate-sync   # live host is gate-sync.onrender.com; do not rename (a Blueprint rename creates a new service)
     runtime: node
     plan: starter
     buildCommand: npm install

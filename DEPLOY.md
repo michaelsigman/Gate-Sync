@@ -80,32 +80,34 @@ committed**. Verify with `git status` before pushing — neither should be liste
 1. Render dashboard → **New** → **Web Service** → connect the GitHub repo.
 2. Render reads `render.yaml` automatically (runtime Node, `npm install`,
    `npm start`).
-3. Set the secret env vars (the ones marked `sync: false`): Proptia and GoAccess
-   logins, `GOACCESS_ANON_KEY`, `GOACCESS_RESIDENT_ID`, Hostfully key + agency,
-   and a `UI_TOKEN` to password-protect the page.
-4. Leave **`DRY_RUN=true`** for now.
-5. Deploy. Your service is at `https://bookedup-gate-sync.onrender.com`.
+3. Set the secret env vars (the ones marked `sync: false`):
+   - Proptia and GoAccess logins, `GOACCESS_ANON_KEY`, `GOACCESS_RESIDENT_ID`
+   - `GATE_SYNC_TOKEN`: the same value as ArrivalPilot's Secret Manager `GATE_SYNC_TOKEN`
+   - `UI_TOKEN`: **required**. Without it the API refuses every request.
+4. For stage 1 (preview) keep **`DRY_RUN=true`** and `AUTO_ADD=true`, and set
+   `AP_FEED_URL=https://us-west1-arrival-pilot-dev.cloudfunctions.net/gateSyncFeed`.
+5. The service is **https://gate-sync.onrender.com**, and it auto-deploys from `main`.
+   - The Blueprint's service `name` is `bookedup-gate-sync`, but the live host is `gate-sync`.
+   - Set ArrivalPilot's `GATE_SYNC_NOTIFY_URL` to `https://gate-sync.onrender.com/api/hooks/gate-submitted`.
 
-The daily cron runs inside the service (default 16:00 UTC ≈ 8–9am Pacific) and
-processes tomorrow's arrivals. While `DRY_RUN=true`, it only logs intentions —
-check the Render logs to see what it *would* do each morning.
+The 15-minute sweep runs inside the service. In preview it logs `WOULD ADD …` lines to the
+Render logs, and sends each run record to ArrivalPilot (`gateSyncRuns`). The last run is
+also shown on `/api/status`.
 
-> `gate_property_map.json` isn't committed, so on Render either (a) add your
-> mappings to `src/propertyMap.js` defaults and commit that, or (b) move the map
-> to Firestore (recommended next step — then onboarding a property is just a
-> confirm-and-save, no redeploy).
+> `gate_property_map.json` **is** committed, and it's what Render uses. It includes each
+> property's `mode` (`off` | `preview` | `live`).
 
 ---
 
 ## 5. Going live (when you're ready)
 
-After a few days of watching dry-run output and confirming it's adding the right
-people to the right gates:
+First compare the `WOULD ADD` lists with what the team adds by hand. Then:
 
-- In the **UI**: flip the mode switch to **Live**, then use **Add to gate** per
-  reservation. You'll get a confirmation prompt each time.
-- For the **automatic daily cron**: set `DRY_RUN=false` in Render env and
-  redeploy.
+- **Stage 2 (one home):** set that property's `mode` to `"live"` in `gate_property_map.json`
+  (commit, then deploy), and set `DRY_RUN=false` in Render. Other homes stay in `preview`.
+- **Stage 3:** set the remaining homes to `"live"`.
+- `DRY_RUN=false` also lets the dashboard's **Add to gate** write for Gate Pilot homes (after
+  Settings → Live and a confirmation). While `DRY_RUN=true`, Add to gate is preview-only.
 
 GoAccess returns a **PIN** for each guest (shown in the UI and logs) — useful if
 you later want to text it to guests.
@@ -114,9 +116,14 @@ you later want to text it to guests.
 
 ## Protecting the UI
 
-Set `UI_TOKEN` to any string. Then the page and API require it:
-`https://…onrender.com/?token=YOUR_TOKEN`. Without `UI_TOKEN` set, the UI is open
-to anyone with the URL — fine for local, not for a public Render URL.
+`UI_TOKEN` is required. Without it every `/api/*` call returns 503 (local dev can set
+`ALLOW_OPEN_UI=true`).
+
+- **Dashboard:** open it once as `https://gate-sync.onrender.com/?token=YOUR_TOKEN`. The page
+  keeps the token for that tab and removes it from the address bar.
+- **ArrivalPilot hook:** uses its own `Authorization: Bearer <GATE_SYNC_TOKEN>`.
+- **Debug endpoints:** `/api/debug/*-add-test` create real passes, so they stay disabled
+  unless `ENABLE_DEBUG_WRITES=true`.
 
 ---
 
