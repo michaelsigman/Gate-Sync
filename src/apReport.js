@@ -34,4 +34,27 @@ async function reportResult({ reservationId, driversUpdatedAt, result, error }) 
   }
 }
 
-module.exports = { reportUrl, reportResult };
+/**
+ * Send one sweep record to ArrivalPilot's run history (gateSyncReport kind:'run' → gateSyncRuns,
+ * 90-day TTL). runId is deterministic, so a retried POST overwrites the same doc. Never throws.
+ */
+async function reportRun(record) {
+  const url = reportUrl();
+  if (!url || !process.env.GATE_SYNC_TOKEN) return { sent: false, reason: 'not_configured' };
+  const runId = `${record.startedAt}_${record.trigger}`.replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 128);
+  try {
+    const res = await axios.post(url, { kind: 'run', run: { ...record, runId } }, {
+      headers: { Authorization: `Bearer ${process.env.GATE_SYNC_TOKEN}` },
+      timeout: 15000,
+      validateStatus: () => true,
+      maxBodyLength: 600 * 1024,
+    });
+    if (res.status >= 400) console.warn(`[apReport] run ${runId} -> HTTP ${res.status}`, JSON.stringify(res.data).slice(0, 200));
+    return { sent: true, httpStatus: res.status, ok: res.status < 400, id: res.data && res.data.id };
+  } catch (e) {
+    console.warn('[apReport] run record failed:', e.message);
+    return { sent: false, reason: 'error', error: String(e.message).slice(0, 200) };
+  }
+}
+
+module.exports = { reportUrl, reportResult, reportRun };

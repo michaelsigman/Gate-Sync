@@ -211,7 +211,12 @@ async function sweep({ trigger = 'cron', reservationId = null, logger = console 
   }
 
   let alert = { sent: false, reason: 'nothing_to_send' };
-  if (newFailures.length) alert = await notify.emailFailures(newFailures, { dashboardUrl: process.env.DASHBOARD_URL });
+  // Alerts are best-effort: no SendGrid key (or any email error) must never break a run. The
+  // failures are already in the store, so the dashboard's red rows don't depend on this.
+  if (newFailures.length) {
+    try { alert = await notify.emailFailures(newFailures, { dashboardUrl: process.env.DASHBOARD_URL }); }
+    catch (e) { alert = { sent: false, reason: 'error', error: String(e.message).slice(0, 200) }; }
+  }
 
   const record = {
     kind: 'sweep', trigger, startedAt, finishedAt: new Date().toISOString(),
@@ -221,9 +226,12 @@ async function sweep({ trigger = 'cron', reservationId = null, logger = console 
     // /api/status groups by community
     communities: Object.values(perProperty).map((p) => ({ community: p.community, added: p.added, wouldAdd: p.wouldAdd, alreadyOnGate: p.alreadyOnGate, failed: p.failed, awaitingNames: p.awaiting, notEligible: p.notEligible })),
   };
+  // History: ArrivalPilot's gateSyncRuns (Firestore) via gateSyncReport; the local store keeps
+  // /api/status working between restarts of the process.
+  record.history = await apReport.reportRun(record);
   store.recordRun(record);
   lastSweep = record;
-  logger.info(`[sweep] done: ${JSON.stringify(counts)}`);
+  logger.info(`[sweep] done: ${JSON.stringify(counts)} | history ${record.history.ok ? 'saved ' + record.history.id : 'NOT saved (' + (record.history.httpStatus || record.history.reason) + ')'}`);
   return { summary: record };
 }
 

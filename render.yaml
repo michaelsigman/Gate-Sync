@@ -1,7 +1,7 @@
 # Gate Sync — Render deployment (manual-use web service)
 # Hosts the operator UI: pull up arrivals for a date, review parsed driver
 # names, and add them to the gate(s) via the Dry-run/Live toggle.
-# (Daily cron deferred — add a Render Cron Job running `npm run run-once` later.)
+# Sweeps run in-process every 15 min (src/automation.js); no separate cron job.
 
 services:
   - type: web
@@ -11,8 +11,24 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
+      # Stage 1 (preview): no gate writes anywhere. Writes need DRY_RUN exactly "false" AND
+      # AUTO_ADD "true" AND a property with mode "live" in gate_property_map.json.
       - key: DRY_RUN
-        value: "false"         # UI toggle controls mode; set "true" to hard-lock preview-only
+        value: "true"
+      - key: AUTO_ADD
+        value: "true"          # sweeps run and log WOULD ADD; still no writes while DRY_RUN is true
+      - key: SWEEP_CRON
+        value: "*/15 * * * *"
+      - key: AP_FEED_URL
+        value: https://us-west1-arrival-pilot-dev.cloudfunctions.net/gateSyncFeed
+      - key: GATE_SYNC_TOKEN
+        sync: false            # = Secret Manager GATE_SYNC_TOKEN (arrival-pilot-dev)
+      - key: UI_TOKEN
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false            # failure email; unset = alerts skipped quietly
+      - key: ALERT_EMAIL_FROM
+        sync: false
       - key: NODE_VERSION
         value: "20"
       - key: PROPTIA_USERNAME
