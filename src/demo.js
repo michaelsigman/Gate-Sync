@@ -56,10 +56,12 @@ function demoStays() {
 }
 // The one live stay: red until the phone form is submitted.
 function liveStayBase() {
-  return { id: 'd-ds-live', home: 'Desert Sky Outpost', checkIn: dayOffset(0), checkOut: dayOffset(2), guest: 'Jordan Rivera', live: true };
+  return { id: 'd-ds-live', home: 'Desert Sky Outpost', checkIn: dayOffset(0), checkOut: dayOffset(2), guest: 'Aaron Abbott', live: true };
 }
 const HOMES = ['Twin Palms', 'Villa Chella', 'Condo on the Green', 'Desert Sky Outpost'];
-const PREFILL = [{ firstName: 'Jordan', lastName: 'Rivera' }, { firstName: 'Casey', lastName: 'Rivera' }];
+// GoAccess lists visitors by first name (A→Z; the real list starts at "Angela Abreu"), so demo names
+// start with "Aa"/"Ab" to land at the top of the portal's list.
+const PREFILL = [{ firstName: 'Aaron', lastName: 'Abbott' }, { firstName: 'Abby', lastName: 'Abbott' }];
 
 // ---- state (demo-only file) ----
 let state = null;
@@ -204,7 +206,8 @@ function submit(drivers) {
 
 /**
  * A one-hour pass for a delivery or ride (Uber, DoorDash, Instacart, …). The pass is named so the
- * guard can tell who it's for: "<Service> delivery for <guest>" or, with a driver's name,
+ * guard can tell who it's for: "<guest> – <Service> delivery" (guest first, so it sorts to the top of
+ * GoAccess's first-name list) or, with a driver's name,
  * "<Name> (<Service>)". Same on/off switch as drivers.
  */
 function submitDelivery(service, driverName) {
@@ -221,7 +224,7 @@ function submitDelivery(service, driverName) {
       const rest = parts.slice(1).join(' ');
       name = `${first}${rest ? ' ' + cleanName(rest, 'name', 0) : ''} (${svc})`;
     } else {
-      name = `${svc === 'Other' ? 'Delivery' : svc + ' delivery'} for ${liveStayBase().guest}`;
+      name = `${liveStayBase().guest} – ${svc === 'Other' ? 'delivery' : svc + ' delivery'}`;
     }
     admitWrite();
     const target = demoTarget();
