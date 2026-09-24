@@ -9,37 +9,16 @@ const { run, processReservation, makeGateManager } = require('./orchestrator');
 const { HostfullyClient } = require('./hostfullyClient');
 const { parseGateNames } = require('./parseNotes');
 const propertyMap = require('./propertyMap');
+const store = require('./store');
+const gateCache = require('./gateCache');
+const { getGateTargets, nameKey } = require('./orchestrator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DRY_RUN = String(process.env.DRY_RUN).toLowerCase() !== 'false';
 
-// Short-lived cache of gate visitor name-key sets, so the calendar (and repeated
-// arrivals loads) don't re-login to each gate constantly. Keyed per gate target.
-const GATE_CACHE_TTL_MS = Number(process.env.GATE_CACHE_TTL_MS || 60000); // 60s
-const _gateCache = new Map(); // cacheKey -> { at:ms, keys:Set|null }
-
-async function getGateKeysCached(gates, target, nameKey) {
-  const cacheKey = `${target.gate}|${target.config.communityId || ''}|${target.config.householdId || ''}|${target.config.residentId || ''}`;
-  const hit = _gateCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < GATE_CACHE_TTL_MS) return hit.keys;
-  let keys = new Set();
-  try {
-    const client = await gates.get(target.gate);
-    const visitors = await client.listVisitors(target.config);
-    for (const v of visitors) {
-      if (v.first_name !== undefined) keys.add(nameKey(v.first_name, v.last_name));
-      else if (v.name) {
-        const parts = String(v.name).trim().split(/\s+/);
-        keys.add(nameKey(parts[0] || '', parts.slice(1).join(' ')));
-      }
-    }
-  } catch (e) {
-    console.warn(`[gate-cache] read failed for ${target.label}: ${e.message}`);
-    keys = null; // null = couldn't check
-  }
-  _gateCache.set(cacheKey, { at: Date.now(), keys });
-  return keys;
-}
+// Gate reads for the dashboard go through ./gateCache (one login per vendor per
+// 15 min, shared by every viewer). Writes (/api/process, cron) are unchanged.
 
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -304,93 +283,150 @@ function isoOffset(base, days) {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// --- API: list tomorrow's arrivals that map to a known gate ---
+// --- Arrivals: shared enrichment (gate status comes from the shared cache) ---
+// Hostfully range reads are cached briefly so many viewers = one PMS call.
+const HOSTFULLY_CACHE_MS = 60 * 1000;
+const _hostfullyCache = new Map(); // "from|to" -> { at, promise }
+function reservationsInRange(from, to) {
+  const k = `${from}|${to}`;
+  const hit = _hostfullyCache.get(k);
+  if (hit && Date.now() - hit.at < HOSTFULLY_CACHE_MS) return hit.promise;
+  const hostfully = new HostfullyClient({
+    apiKey: process.env.HOSTFULLY_API_KEY,
+    agencyUid: process.env.HOSTFULLY_AGENCY_UID,
+  });
+  const promise = hostfully.getReservationsInRange(from, to);
+  _hostfullyCache.set(k, { at: Date.now(), promise });
+  promise.catch(() => _hostfullyCache.delete(k));
+  return promise;
+}
+
+async function enrichReservation(r, prop, { checkGates = true } = {}) {
+  const parsed = parseGateNames(r.notes);
+  const targets = getGateTargets(prop);
+  let latestAdd = null;
+  const namesWithStatus = [];
+  for (const n of parsed.names) {
+    const key = nameKey(n.firstName, n.lastName);
+    const onGates = {}; // label -> true(on) / false(not) / null(unknown)
+    const addedAt = {}; // label -> ISO time WE added them (if we did)
+    for (const t of targets) {
+      if (checkGates) {
+        const keys = await gateCache.keysFor(t);
+        onGates[t.label] = keys === null ? null : keys.has(key);
+        if (onGates[t.label]) store.resolveIfOnGate(r.reservationId, t.label, key);
+      }
+      const rec = store.addedFor(r.reservationId, t.label, key);
+      if (rec) {
+        addedAt[t.label] = rec.at;
+        if (!latestAdd || rec.at > latestAdd) latestAdd = rec.at;
+      }
+    }
+    namesWithStatus.push({ firstName: n.firstName, lastName: n.lastName, onGates, addedAt });
+  }
+  const failures = store.openFailuresFor(r.reservationId).map((f) => ({
+    at: f.at, name: f.name, gate: f.gate, gateLabel: f.gateLabel, reason: f.reason, source: f.source,
+  }));
+  return {
+    reservationId: r.reservationId,
+    propertyUid: r.propertyUid,
+    mapped: true,
+    gates: targets.map((t) => ({ gate: t.gate, label: t.label, community: t.config.community || prop.community || null })),
+    gateCount: targets.length,
+    property: prop.label,
+    community: prop.community || (targets[0] && targets[0].config.community) || null,
+    arrivalDate: r.arrivalDate,
+    departureDate: r.departureDate,
+    notes: r.notes,
+    guest: parsed.guest,
+    names: parsed.names,
+    namesWithStatus,
+    nameCount: parsed.names.length,
+    // The parser always lists the booking guest first, so nameCount > 0 even when
+    // no driver list was submitted. This says whether a driver list exists.
+    hasDriverList: (parsed.blockCount || 0) > 0,
+    gateCheck: checkGates,
+    addedAt: latestAdd, // most recent time WE added anyone for this reservation
+    failures,           // open (unresolved) gate-push failures
+  };
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// --- API: arrivals for one day (kept for compatibility) ---
 app.get('/api/arrivals', checkToken, async (req, res) => {
   try {
     const day = req.query.date || tomorrowISO();
-    // Gate check is ON by default; pass ?checkGates=0 to skip for a faster load.
+    if (!ISO_DAY.test(day)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    // Gate check is ON by default; pass ?checkGates=0 to skip.
     const checkGates = req.query.checkGates !== '0';
-    const hostfully = new HostfullyClient({
-      apiKey: process.env.HOSTFULLY_API_KEY,
-      agencyUid: process.env.HOSTFULLY_AGENCY_UID,
-    });
-    const reservations = await hostfully.getReservationsArriving(day, { logger: console });
-    const { getGateTargets, makeGateManager } = require('./orchestrator');
-
-    // Build a cache of existing visitor name-keys per gate target, so we only
-    // hit each gate once even if several reservations map to it. Resilient:
-    // if a gate read fails, we just skip the "already added" marks for it.
-    const gates = checkGates ? makeGateManager(console, { login: true }) : null;
-    const existingByTarget = new Map(); // key: gate+communityId -> Set(nameKeys)
-    const { nameKey } = require('./orchestrator');
-
-    async function existingFor(target) {
-      const cacheKey = `${target.gate}|${target.config.communityId}|${target.config.householdId || ''}`;
-      if (existingByTarget.has(cacheKey)) return existingByTarget.get(cacheKey);
-      let set = new Set();
-      try {
-        const client = await gates.get(target.gate);
-        const visitors = await client.listVisitors(target.config);
-        for (const v of visitors) {
-          if (v.first_name !== undefined) set.add(nameKey(v.first_name, v.last_name));
-          else if (v.name) {
-            const parts = String(v.name).trim().split(/\s+/);
-            set.add(nameKey(parts[0] || '', parts.slice(1).join(' ')));
-          }
-        }
-      } catch (e) {
-        console.warn(`[arrivals] gate read failed for ${target.label}: ${e.message}`);
-        set = null; // null = "couldn't check", distinct from empty set
-      }
-      existingByTarget.set(cacheKey, set);
-      return set;
-    }
-
+    const reservations = (await reservationsInRange(day, day)).filter((r) => (r.arrivalDate || '').startsWith(day));
     const enriched = [];
     for (const r of reservations) {
       const prop = propertyMap[r.propertyUid];
-      if (!prop) continue; // mapped houses only — skip properties with no gate
-      const parsed = parseGateNames(r.notes);
-      const targets = getGateTargets(prop);
-
-      // For each parsed name, determine if it's already on each gate target.
-      let namesWithStatus = parsed.names.map((n) => ({
-        firstName: n.firstName,
-        lastName: n.lastName,
-        onGates: {}, // label -> true(on) / false(not) / null(unknown)
-      }));
-
-      if (checkGates && targets.length) {
-        for (const t of targets) {
-          const existing = await existingFor(t);
-          for (const nm of namesWithStatus) {
-            const key = nameKey(nm.firstName, nm.lastName);
-            nm.onGates[t.label] = existing === null ? null : existing.has(key);
-          }
-        }
-      }
-
-      enriched.push({
-        reservationId: r.reservationId,
-        propertyUid: r.propertyUid,
-        mapped: true,
-        gates: targets.map((t) => ({ gate: t.gate, label: t.label })),
-        gateCount: targets.length,
-        property: prop.label,
-        arrivalDate: r.arrivalDate,
-        departureDate: r.departureDate,
-        notes: r.notes,
-        guest: parsed.guest,
-        names: parsed.names,
-        namesWithStatus,
-        nameCount: parsed.names.length,
-        gateCheck: checkGates,
-      });
+      if (prop) enriched.push(await enrichReservation(r, prop, { checkGates })); // mapped houses only
     }
-    res.json({ date: day, count: enriched.length, reservations: enriched });
+    res.json({ date: day, count: enriched.length, reservations: enriched, gatesCheckedAt: gateCache.lastCheckedAt() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// --- API: arrivals for a date range in ONE call (dashboard list) ---
+// GET /api/arrivals/range?from=YYYY-MM-DD&to=YYYY-MM-DD  (max 31 days)
+app.get('/api/arrivals/range', checkToken, async (req, res) => {
+  try {
+    const from = req.query.from || isoOffset(new Date(), 0);
+    const to = req.query.to || isoOffset(new Date(), 7);
+    if (!ISO_DAY.test(from) || !ISO_DAY.test(to) || to < from) {
+      return res.status(400).json({ error: 'from/to must be YYYY-MM-DD with from <= to' });
+    }
+    if ((Date.parse(to) - Date.parse(from)) / 864e5 > 31) {
+      return res.status(400).json({ error: 'range is limited to 31 days' });
+    }
+    const reservations = await reservationsInRange(from, to);
+    const enriched = [];
+    for (const r of reservations) {
+      const day = (r.arrivalDate || '').slice(0, 10);
+      if (day < from || day > to) continue;
+      const prop = propertyMap[r.propertyUid];
+      if (prop) enriched.push(await enrichReservation(r, prop));
+    }
+    enriched.sort((a, b) => (a.arrivalDate || '').localeCompare(b.arrivalDate || ''));
+    res.json({ from, to, count: enriched.length, reservations: enriched, gatesCheckedAt: gateCache.lastCheckedAt() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- API: status bar + ops view. Read-only; never triggers a gate read. ---
+app.get('/api/status', checkToken, (_req, res) => {
+  const health = gateCache.health();
+  const lastRun = store.runs(1)[0] || null;
+  const byCommunity = new Map();
+  for (const h of health) {
+    // Until the map has community names, group by property (same fallback as the sync log).
+    const name = h.community || h.property || 'Unnamed community';
+    const c = byCommunity.get(name) || { community: name, named: !!h.community, gates: [], lastSync: null };
+    c.gates.push({ gate: h.gate, label: h.label, checkedAt: h.checkedAt, error: h.error });
+    byCommunity.set(name, c);
+  }
+  for (const rc of (lastRun && lastRun.communities) || []) {
+    const c = byCommunity.get(rc.community);
+    if (c) c.lastSync = rc;
+  }
+  const failures = store.recentFailures(50);
+  res.json({
+    serverMode: DRY_RUN ? 'preview-locked' : 'live-allowed',
+    communities: byCommunity.size,
+    communityResults: [...byCommunity.values()],
+    lastSyncAt: lastRun ? lastRun.finishedAt || lastRun.startedAt : null,
+    lastSync: lastRun,
+    gatesCheckedAt: gateCache.lastCheckedAt(),
+    gateCacheTtlMs: gateCache.TTL_MS,
+    openFailures: failures.filter((f) => !f.resolvedAt).length,
+    failures,
+  });
 });
 
 // --- API: month calendar counts (fast, no gate login) ---
@@ -406,14 +442,7 @@ app.get('/api/calendar', checkToken, async (req, res) => {
     const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const to = `${year}-${pad(month)}-${pad(lastDay)}`;
 
-    const hostfully = new HostfullyClient({
-      apiKey: process.env.HOSTFULLY_API_KEY,
-      agencyUid: process.env.HOSTFULLY_AGENCY_UID,
-    });
-    const reservations = await hostfully.getReservationsInRange(from, to);
-
-    const { getGateTargets, makeGateManager, nameKey } = require('./orchestrator');
-    const gates = makeGateManager(console, { login: true });
+    const reservations = await reservationsInRange(from, to);
 
     // Per day: { all, some, none } counts of mapped reservations needing names.
     //   all  = every name already on every gate (done) -> green
@@ -434,7 +463,7 @@ app.get('/api/calendar', checkToken, async (req, res) => {
       let filledSlots = 0;
       let anyUnknown = false;
       for (const t of targets) {
-        const keys = await getGateKeysCached(gates, t, nameKey);
+        const keys = await gateCache.keysFor(t);
         for (const n of parsed.names) {
           totalSlots += 1;
           if (keys === null) { anyUnknown = true; continue; }
@@ -488,6 +517,7 @@ app.post('/api/process', checkToken, async (req, res) => {
       clients,
       dryRun: effectiveDryRun,
       names: Array.isArray(names) ? names : undefined,
+      source: 'manual',
     });
     // Tell the UI if the server overrode its request, so it can show a notice.
     if (serverForcesDry && !dryRun) out.serverForcedDryRun = true;
@@ -503,6 +533,7 @@ app.post('/run', checkToken, async (_req, res) => {
     const result = await run();
     res.json({ ok: true, result });
   } catch (e) {
+    store.recordRun({ startedAt: new Date().toISOString(), mode: DRY_RUN ? 'dry-run' : 'live', error: e.message, communities: [] });
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -519,7 +550,10 @@ function tomorrowISO() {
 const schedule = process.env.CRON_SCHEDULE || '0 16 * * *';
 cron.schedule(schedule, () => {
   console.log('[gate-sync] cron firing');
-  run().catch((e) => console.error('[gate-sync] cron error', e));
+  run().catch((e) => {
+    console.error('[gate-sync] cron error', e);
+    store.recordRun({ startedAt: new Date().toISOString(), mode: DRY_RUN ? 'dry-run' : 'live', error: e.message, communities: [] });
+  });
 });
 
 app.listen(PORT, () => {

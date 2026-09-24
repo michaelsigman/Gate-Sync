@@ -266,6 +266,7 @@
   .switch{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden;background:var(--bg-2)}
   .switch button{background:transparent;border:0;color:var(--ink-dim);font-size:14px;font-weight:600;padding:9px 22px;cursor:pointer}
   .switch button.on{background:var(--brand);color:var(--on-brand)}
+  .switch button:disabled{opacity:.45;cursor:not-allowed}
 
   .empty-state{text-align:center;padding:48px 20px;color:var(--ink-faint)}
   .empty-state .t{font-family:'Sora';font-weight:600;color:var(--ink-dim);font-size:15px;margin-bottom:4px}
@@ -392,7 +393,7 @@
   <div class="drawer-head"><h3>Settings</h3><button class="icon-btn" id="drawerClose" aria-label="Close settings">✕</button></div>
   <div class="setting">
     <h4>Mode</h4>
-    <p>Live writes real passes to the gate when you press “Add to gate”. Preview shows what would happen without writing. If the server is locked to preview (DRY_RUN), it stays preview either way.</p>
+    <p>Live writes real passes to the gate when you press “Add to gate”. Preview shows what would happen without writing. The dashboard always opens in Preview. If the server is locked to Preview (DRY_RUN=true), Live can’t be selected.</p>
     <div class="switch" id="modeSwitch">
       <button data-mode="dry">Preview</button>
       <button data-mode="live">Live</button>
@@ -404,15 +405,19 @@
 
 <script>
 const DAYS_AHEAD = 7;                 // today + next 7 days
-const REFRESH_MS = 15 * 60 * 1000;    // auto-refresh for an unattended screen
+// Cheap to poll: the server caches gate reads (one login per vendor per 15 min)
+// and Hostfully reads (60 s), however many screens are open.
+const REFRESH_MS = 2 * 60 * 1000;
 const state = {
-  mode: 'dry',
+  mode: 'dry',         // always opens in Preview; Live is an explicit choice in Settings
   days: [],            // [{date, reservations:[], error}]
   filterDate: null,    // YYYY-MM-DD when a calendar day is selected
   extraDay: null,      // loaded day outside the 7-day window (from calendar click)
   loadedAt: null,
-  failed: {},          // reservationId -> {at, message}  (gate push errors this session)
-  addedAt: {},         // reservationId -> ms  (successful live adds this session)
+  loadError: null,
+  serverStatus: null,  // /api/status
+  failed: {},          // reservationId -> {at, message}  (errors seen in this tab, before the next refresh)
+  addedAt: {},         // reservationId -> ms  (live adds made in this tab)
   open: null,          // expanded reservationId
 };
 const $ = (s,r=document)=>r.querySelector(s);
@@ -445,6 +450,7 @@ function dayLabel(iso){
 
 // ---- Mode ----
 function setMode(m){
+  if(m==='live' && serverLocked()){ toast('Server is locked to Preview (DRY_RUN=true)'); m='dry'; }
   state.mode = m;
   document.querySelectorAll('#modeSwitch button').forEach(b=>b.classList.toggle('on', b.dataset.mode===m));
   const ind = $('#modeInd');
@@ -464,10 +470,15 @@ function openSettings(on){
 // partial  : on some gates / some names                        -> neutral
 // ready    : names parsed, not on the gate yet (cron adds them) -> neutral
 // unknown  : gate couldn't be read                             -> neutral
+function serverLocked(){ return !!(state.serverStatus && state.serverStatus.serverMode==='preview-locked'); }
+function openFailures(r){ return (r.failures||[]).length ? r.failures : (state.failed[r.reservationId] ? [{at:new Date(state.failed[r.reservationId].at).toISOString(), reason:state.failed[r.reservationId].message}] : []); }
+// Older servers don't send hasDriverList; fall back to "no names at all".
+function awaitingDrivers(r){ return r.hasDriverList===false || !r.nameCount; }
+
 function statusOf(r){
-  if(state.failed[r.reservationId]) return 'failed';
+  if(openFailures(r).length) return 'failed';
   if(state.addedAt[r.reservationId]) return 'added';
-  if(!r.nameCount) return 'awaiting';
+  if(awaitingDrivers(r)) return 'awaiting';
   const labels = (r.gates||[]).map(g=>g.label);
   const vals = (r.namesWithStatus||[]).flatMap(n=>labels.map(l=>n.onGates ? n.onGates[l] : undefined));
   if(!r.gateCheck || !vals.length) return 'ready';
@@ -481,34 +492,29 @@ function statusOf(r){
 const STATUS_TEXT = {added:'Added', awaiting:'Awaiting driver name', failed:'Failed', partial:'Partly added', ready:'Ready to add', unknown:'Not verified'};
 
 // ---- Data ----
-async function fetchDay(date){
-  const res = await fetch('/api/arrivals?date='+date);
+async function fetchRange(from, to){
+  const res = await fetch('/api/arrivals/range?from='+from+'&to='+to);
   const data = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(data.error||('HTTP '+res.status));
   return data.reservations||[];
 }
 
-// Each /api/arrivals call logs in to the gates to check who's on them, so load
-// days two at a time and render as each one lands.
+// One call for the whole window; the server does the gate caching.
 async function loadWindow(){
-  const start = todayISO();
+  const start = todayISO(), end = addDaysISO(start, DAYS_AHEAD);
   const dates = Array.from({length:DAYS_AHEAD+1},(_,i)=>addDaysISO(start,i));
-  const fresh = dates.map(date=>({date, reservations:null, error:null}));
-  if(!state.days.length) { state.days = fresh; renderAll(); }
-  let next = 0, errors = 0;
-  async function worker(){
-    while(next<dates.length){
-      const i = next++;
-      try{ fresh[i].reservations = await fetchDay(dates[i]); }
-      catch(e){ fresh[i].error = e.message; fresh[i].reservations = []; errors++; }
-      // First load renders each day as it lands; refreshes swap in once complete.
-      if(state.days===fresh) renderAll();
-    }
+  if(!state.days.length){ state.days = dates.map(date=>({date, reservations:null, error:null})); renderAll(); }
+  try{
+    const all = await fetchRange(start, end);
+    state.days = dates.map(date=>({date, error:null, reservations: all.filter(r=>(r.arrivalDate||'').slice(0,10)===date)}));
+    state.loadedAt = Date.now();
+    state.loadError = null;
+    state.failed = {}; // server's failure log is now the source of truth
+  }catch(e){
+    state.loadError = e.message;
+    // Keep showing the last good data; only blank days that never loaded.
+    state.days = state.days.map(d=>d.reservations===null ? {...d, reservations:[], error:e.message} : d);
   }
-  await Promise.all([worker(),worker()]);
-  state.days = fresh;
-  state.loadedAt = Date.now();
-  state.loadErrors = errors;
   renderAll();
 }
 
@@ -543,14 +549,19 @@ function renderStats(){
 
 function renderStatusbar(){
   const bar = $('#statusbar'); bar.textContent='';
-  if(!state.loadedAt){ bar.appendChild(el('span','spin')); bar.appendChild(el('span',null,' Checking the gates…')); return; }
+  if(!state.loadedAt && !state.loadError){ bar.appendChild(el('span','spin')); bar.appendChild(el('span',null,' Checking the gates…')); return; }
   const parts = [];
-  const st = state.serverStatus; // optional /api/status: {communities, lastSyncAt}
+  const st = state.serverStatus;
   if(st && st.communities!=null) parts.push(st.communities+(st.communities===1?' community':' communities')+' connected');
-  if(st && st.lastSyncAt) parts.push('Last sync '+ago(new Date(st.lastSyncAt).getTime()));
-  parts.push('Gates checked '+ago(state.loadedAt));
-  if(state.loadErrors) parts.push(state.loadErrors+(state.loadErrors===1?' day':' days')+' couldn’t load');
-  bar.appendChild(el('span','dot'));
+  if(st) parts.push(st.lastSyncAt ? 'Last sync '+ago(Date.parse(st.lastSyncAt)) : 'No sync recorded yet');
+  const checked = st && st.gatesCheckedAt ? Date.parse(st.gatesCheckedAt) : null;
+  if(checked) parts.push('Gates checked '+ago(checked));
+  const gateErrs = st ? (st.communityResults||[]).flatMap(c=>c.gates).filter(g=>g.error).length : 0;
+  if(gateErrs) parts.push(gateErrs+(gateErrs===1?' gate':' gates')+' unreachable');
+  if(state.loadError) parts.push('Couldn’t refresh: '+state.loadError);
+  const dot = el('span','dot');
+  if(gateErrs || state.loadError) dot.style.background = 'var(--amber)';
+  bar.appendChild(dot);
   parts.forEach((p,i)=>{ if(i) bar.appendChild(el('span','sep','·')); bar.appendChild(el('span',null,p)); });
 }
 
@@ -604,7 +615,10 @@ function arrivalRow(r, showCommunity){
   const who = el('div','who');
   who.appendChild(el('div','gname', guestName(r)));
   const drivers = (r.names||[]).map(n=>(n.firstName+' '+n.lastName).trim()).filter(Boolean);
-  who.appendChild(el('div','drivers', drivers.length ? 'Drivers: '+drivers.join(', ') : 'No driver names yet'));
+  const driverTxt = !drivers.length ? 'No driver names yet'
+    : r.hasDriverList===false ? 'Booking guest only · no driver list yet'
+    : 'Drivers: '+drivers.join(', ');
+  who.appendChild(el('div','drivers', driverTxt));
   main.appendChild(who);
 
   const [pname, paddr] = String(r.property||'').split(' — ');
@@ -634,8 +648,8 @@ function arrivalRow(r, showCommunity){
 
   // "added X ago" when we know it: from the server (optional r.addedAt) or a live add this session.
   const addedMs = state.addedAt[r.reservationId] || (r.addedAt ? new Date(r.addedAt).getTime() : null);
-  const failed = state.failed[r.reservationId];
-  const agoTxt = failed ? 'failed '+ago(failed.at) : (s==='added' && addedMs) ? 'added '+ago(addedMs) : '';
+  const failed = openFailures(r)[0];
+  const agoTxt = failed ? 'failed '+ago(Date.parse(failed.at)) : (s==='added' && addedMs) ? 'added '+ago(addedMs) : '';
   main.appendChild(el('div','ago', agoTxt));
 
   main.onclick = ()=>{ state.open = state.open===r.reservationId ? null : r.reservationId; renderList(); };
@@ -653,7 +667,10 @@ function detailPanel(r){
   meta.appendChild(el('span','mono', r.arrivalDate+' → '+r.departureDate));
   if(r.gates && r.gates.length) meta.appendChild(document.createTextNode(' · Gate'+(r.gates.length>1?'s':'')+': '+r.gates.map(g=>g.label).join(' + ')));
   panel.appendChild(meta);
-  if(state.failed[r.reservationId]) panel.appendChild(el('div','result-err','Last attempt failed: '+state.failed[r.reservationId].message));
+  openFailures(r).forEach(f=>{
+    const who = f.name ? f.name+(f.gateLabel?' → '+f.gateLabel:'')+': ' : '';
+    panel.appendChild(el('div','result-err','Failed '+ago(Date.parse(f.at))+(f.source==='cron'?' (daily sync)':'')+' · '+who+f.reason));
+  });
 
   const names = el('div','names');
   names.appendChild(el('h4',null,'Drivers'));
@@ -803,7 +820,7 @@ async function setFilter(date){
   if(date && !inWindow){
     state.extraDay = {date, reservations:null, error:null};
     renderList();
-    try{ state.extraDay.reservations = await fetchDay(date); }
+    try{ state.extraDay.reservations = await fetchRange(date, date); }
     catch(e){ state.extraDay.error = e.message; state.extraDay.reservations = []; }
   }
   renderList();
@@ -871,10 +888,15 @@ function applyTheme(t){
   applyTheme(t);
 })();
 
-// Optional server status (communities connected, last cron sync). Absent today -> hidden.
+// Server status: communities, last sync, gate health, and whether DRY_RUN locks Preview.
 async function loadServerStatus(){
   try{ const r = await fetch('/api/status'); if(r.ok) state.serverStatus = await r.json(); }catch(e){}
+  const liveBtn = $('#modeSwitch [data-mode="live"]');
+  liveBtn.disabled = serverLocked();
+  liveBtn.title = serverLocked() ? 'The server is locked to Preview (DRY_RUN=true)' : '';
+  if(serverLocked() && state.mode==='live') setMode('dry');
 }
+async function refresh(){ await Promise.all([loadServerStatus(), loadWindow()]); }
 
 (function init(){
   document.querySelectorAll('#modeSwitch button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
@@ -886,10 +908,9 @@ async function loadServerStatus(){
   $('#scrim').onclick=()=>openSettings(false);
   document.addEventListener('keydown',e=>{ if(e.key==='Escape') openSettings(false); });
   $('#themeToggle').onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light');
-  setMode('live'); // unchanged default; server DRY_RUN=true still forces preview
-  loadServerStatus().then(renderStatusbar);
-  loadWindow();
-  setInterval(()=>{ if(!state.open) loadWindow(); }, REFRESH_MS);
+  setMode('dry'); // always open in Preview; Live only via Settings, never remembered
+  refresh();
+  setInterval(()=>{ if(!state.open) refresh(); }, REFRESH_MS);
   setInterval(renderStatusbar, 60*1000);
 })();
 </script>

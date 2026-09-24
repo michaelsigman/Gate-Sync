@@ -6,6 +6,7 @@ const { GoAccessClient } = require('./goAccessClient');
 const { HostfullyClient } = require('./hostfullyClient');
 const { parseGateNames } = require('./parseNotes');
 const propertyMap = require('./propertyMap');
+const store = require('./store');
 
 const DRY_RUN = process.env.DRY_RUN !== 'false'; // defaults to TRUE (safe)
 
@@ -179,6 +180,32 @@ function getGateTargets(prop) {
   return [{ gate: prop.gate, config: prop, label: prop.label }];
 }
 
+// --- Bookkeeping for the dashboard (never affects what gets written) ---
+function communityOf(prop, target) {
+  return (target && target.config && target.config.community) || prop.community || prop.label || 'Unnamed community';
+}
+function slotInfo(res, prop, target, n, key, source) {
+  return {
+    reservationId: res.reservationId,
+    propertyUid: res.propertyUid,
+    property: prop.label,
+    community: communityOf(prop, target),
+    gate: target.gate,
+    gateLabel: target.label,
+    nameKey: key,
+    name: `${n.firstName} ${n.lastName}`.trim(),
+    source,
+  };
+}
+function recordOutcome(slot, target, ok, reason) {
+  if (ok) {
+    store.recordAdded(slot);
+    try { require('./gateCache').noteAdded(target, slot.nameKey); } catch (_) { /* cache is optional */ }
+  } else {
+    store.recordFailure({ ...slot, reason });
+  }
+}
+
 async function run({ logger = console } = {}) {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -199,11 +226,20 @@ async function run({ logger = console } = {}) {
   const actionable = reservations.filter((r) => propertyMap[r.propertyUid]);
   if (actionable.length === 0) {
     logger.info('[gate-sync] none map to a known gate property — nothing to do');
+    const at = new Date().toISOString();
+    store.recordRun({ startedAt: at, finishedAt: at, mode: DRY_RUN ? 'dry-run' : 'live', arrivalDate: fmtYYYYMMDD(tomorrow), processed: 0, communities: [] });
     return { processed: 0, summary: [] };
   }
 
   const gates = makeGateManager(logger);
   const summary = [];
+  const startedAt = new Date().toISOString();
+  const communities = {}; // community -> counts, for /api/status
+  const tally = (prop, target, field) => {
+    const name = communityOf(prop, target);
+    const c = (communities[name] = communities[name] || { community: name, added: 0, wouldAdd: 0, alreadyOnGate: 0, failed: 0, awaitingNames: 0 });
+    c[field] += 1;
+  };
 
   for (const res of actionable) {
     const prop = propertyMap[res.propertyUid];
@@ -214,6 +250,7 @@ async function run({ logger = console } = {}) {
 
     if (parsed.names.length === 0) {
       logger.info('  no gate-name block in notes — skipping');
+      tally(prop, targets[0], 'awaitingNames');
       summary.push({ property: prop.label, added: [], skipped: 'no names' });
       continue;
     }
@@ -233,8 +270,11 @@ async function run({ logger = console } = {}) {
       const added = [];
       for (const n of parsed.names) {
         const key = nameKey(n.firstName, n.lastName);
+        const slot = slotInfo(res, prop, target, n, key, 'cron');
         if (existing.has(key)) {
           logger.info(`    • ${n.firstName} ${n.lastName} — already on gate, skip`);
+          store.resolveIfOnGate(res.reservationId, target.label, key);
+          tally(prop, target, 'alreadyOnGate');
           continue;
         }
         if (DRY_RUN) {
@@ -243,6 +283,7 @@ async function run({ logger = console } = {}) {
               `(${fmtYYYYMMDD(arrival)} → ${fmtYYYYMMDD(departure)})`
           );
           added.push(`${n.firstName} ${n.lastName}`);
+          tally(prop, target, 'wouldAdd');
         } else {
           try {
             const r = await addOne(client, target.gate, target.config, n, arrival, departure);
@@ -251,8 +292,12 @@ async function run({ logger = console } = {}) {
               `    + ADDED: ${n.firstName} ${n.lastName} — ${r.ok ? 'ok' : 'status ' + r.status}${pin}`
             );
             if (r.ok) added.push(`${n.firstName} ${n.lastName}${pin}`);
+            recordOutcome(slot, target, r.ok, r.ok ? null : 'gate returned status ' + r.status);
+            tally(prop, target, r.ok ? 'added' : 'failed');
           } catch (e) {
             logger.error(`    ! FAILED ${n.firstName} ${n.lastName}: ${e.message}`);
+            recordOutcome(slot, target, false, e.message);
+            tally(prop, target, 'failed');
           }
         }
       }
@@ -262,6 +307,14 @@ async function run({ logger = console } = {}) {
 
   logger.info('\n[gate-sync] done. summary:');
   logger.info(JSON.stringify(summary, null, 2));
+  store.recordRun({
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    mode: DRY_RUN ? 'dry-run' : 'live',
+    arrivalDate: fmtYYYYMMDD(tomorrow),
+    processed: actionable.length,
+    communities: Object.values(communities),
+  });
   return { processed: actionable.length, summary };
 }
 
@@ -270,7 +323,7 @@ async function run({ logger = console } = {}) {
  * plan/result without logging. `clients` is a map of gate->client (may be empty
  * in dry-run). Handles properties that target multiple gates.
  */
-async function processReservation({ reservation, prop, clients = {}, dryRun, names }) {
+async function processReservation({ reservation, prop, clients = {}, dryRun, names, source = 'manual' }) {
   // If the caller supplies an explicit `names` list (e.g. the UI after the
   // operator edited/checked names), use it. Otherwise parse from the notes.
   let parsed;
@@ -301,8 +354,10 @@ async function processReservation({ reservation, prop, clients = {}, dryRun, nam
     for (const n of parsed.names) {
       const key = nameKey(n.firstName, n.lastName);
       const display = `${n.firstName} ${n.lastName}`.trim();
+      const slot = slotInfo(reservation, prop, target, n, key, source);
       if (existing.has(key)) {
         results.push({ name: display, status: 'already_on_gate' });
+        store.resolveIfOnGate(reservation.reservationId, target.label, key);
         continue;
       }
       if (dryRun) {
@@ -316,8 +371,10 @@ async function processReservation({ reservation, prop, clients = {}, dryRun, nam
             pin: r.pin || null,
             httpStatus: r.status,
           });
+          recordOutcome(slot, target, r.ok, r.ok ? null : 'gate returned status ' + r.status);
         } catch (e) {
           results.push({ name: display, status: 'failed', error: e.message });
+          recordOutcome(slot, target, false, e.message);
         }
       }
     }
