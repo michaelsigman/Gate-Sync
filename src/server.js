@@ -29,19 +29,31 @@ app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Optional shared-secret gate for the UI/API. Set UI_TOKEN in env to require it.
+// Shared-secret gate for the UI API. FAIL-CLOSED: with no UI_TOKEN the API refuses, because the
+// service is on a public URL and returns guest names. Local dev can opt out with ALLOW_OPEN_UI=true.
 function checkToken(req, res, next) {
   const need = process.env.UI_TOKEN;
-  if (!need) return next();
-  const got = req.get('x-ui-token') || req.query.token;
-  if (got === need) return next();
+  if (!need) {
+    if (process.env.ALLOW_OPEN_UI === 'true') return next();
+    return res.status(503).json({ error: 'UI_TOKEN is not configured on the server' });
+  }
+  const got = String(req.get('x-ui-token') || req.query.token || '');
+  if (got.length === need.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(need))) return next();
   return res.status(403).json({ error: 'forbidden' });
+}
+
+// The two add-test endpoints create REAL passes and bypass DRY_RUN, mode and AUTO_ADD. Off unless
+// explicitly enabled for a supervised test.
+function debugWritesAllowed(_req, res, next) {
+  if (process.env.ENABLE_DEBUG_WRITES === 'true') return next();
+  return res.status(403).json({ error: 'debug gate writes are disabled (ENABLE_DEBUG_WRITES)' });
 }
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 // --- Controlled single live add: one test guest to a GoAccess property ---
 // POST /api/debug/goaccess-add-test?propertyUid=...  (creates ONE real pass)
-app.post('/api/debug/goaccess-add-test', checkToken, async (req, res) => {
+app.post('/api/debug/goaccess-add-test', checkToken, debugWritesAllowed, async (req, res) => {
   try {
     const propertyUid = req.query.propertyUid;
     const prop = propertyUid && propertyMap[propertyUid];
@@ -80,7 +92,7 @@ app.post('/api/debug/goaccess-add-test', checkToken, async (req, res) => {
 
 // --- Controlled single live add: one test guest to one Proptia property ---
 // POST /api/debug/proptia-add-test?propertyUid=...  (creates ONE real pass)
-app.post('/api/debug/proptia-add-test', checkToken, async (req, res) => {
+app.post('/api/debug/proptia-add-test', checkToken, debugWritesAllowed, async (req, res) => {
   try {
     const propertyUid = req.query.propertyUid;
     const prop = propertyUid && propertyMap[propertyUid];
