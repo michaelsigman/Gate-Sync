@@ -85,10 +85,11 @@ committed**. Verify with `git status` before pushing — neither should be liste
    - `GATE_SYNC_TOKEN`: the same value as ArrivalPilot's Secret Manager `GATE_SYNC_TOKEN`
    - `UI_TOKEN`: **required**. Without it the API refuses every request.
 4. For stage 1 (preview) keep **`DRY_RUN=true`** and `AUTO_ADD=true`, and set
-   `AP_FEED_URL=https://us-west1-arrival-pilot-dev.cloudfunctions.net/gateSyncFeed`.
+   `AP_FEED_URL=https://us-west1-pool-pilot-firebase.cloudfunctions.net/gateSyncFeed`.
 5. The service is **https://gate-sync.onrender.com**, and it auto-deploys from `main`.
    - The Blueprint's service `name` is `bookedup-gate-sync`, but the live host is `gate-sync`.
-   - Set ArrivalPilot's `GATE_SYNC_NOTIFY_URL` to `https://gate-sync.onrender.com/api/hooks/gate-submitted`.
+   - Set ArrivalPilot's `GATE_SYNC_NOTIFY_URL` to `https://gate-sync.onrender.com/api/hooks/gate-submitted`
+     and `GATE_SYNC_NOTIFY_ENABLED=true`. Both go in the backend's `functions/.env.pool-pilot-firebase`, which overrides `functions/.env` on prod deploys.
 
 The 15-minute sweep runs inside the service. In preview it logs `WOULD ADD …` lines to the
 Render logs, and sends each run record to ArrivalPilot (`gateSyncRuns`). The last run is

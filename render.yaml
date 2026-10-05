@@ -20,9 +20,9 @@ services:
       - key: SWEEP_CRON
         value: "*/15 * * * *"
       - key: AP_FEED_URL
-        value: https://us-west1-arrival-pilot-dev.cloudfunctions.net/gateSyncFeed
+        value: https://us-west1-pool-pilot-firebase.cloudfunctions.net/gateSyncFeed
       - key: GATE_SYNC_TOKEN
-        sync: false            # = Secret Manager GATE_SYNC_TOKEN (arrival-pilot-dev)
+        sync: false            # = Secret Manager GATE_SYNC_TOKEN (pool-pilot-firebase)
       - key: UI_TOKEN
         sync: false
       - key: SENDGRID_API_KEY
